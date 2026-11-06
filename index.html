@@ -140,13 +140,13 @@ input.search{width:100%;height:36px;border-radius:10px;border:1px solid var(--li
 .pvwrap{position:relative}
 .pv{display:flex;overflow-x:auto;scroll-snap-type:x mandatory;scrollbar-width:none;background:#111}
 .pv::-webkit-scrollbar{display:none}
-.pv img{flex:none;width:100%;scroll-snap-align:center;display:block}
+.pv img,.pv canvas{flex:none;width:100%;scroll-snap-align:center;display:block}
 .pvcount{position:absolute;top:10px;right:10px;background:rgba(0,0,0,.6);color:#fff;font-size:12px;padding:3px 8px;border-radius:999px}
 .dots{display:flex;justify-content:center;gap:4px;padding:10px;flex-wrap:wrap}
 .dots i{width:6px;height:6px;border-radius:50%;background:#555}
 .dots i.on{background:var(--accent)}
 .strip{display:flex;gap:2px;overflow-x:auto;margin-top:12px;padding-bottom:4px}
-.strip img{height:90px;display:block}
+.strip img,.strip canvas{height:90px;width:auto;display:block}
 .prog{font-size:12.5px;color:var(--muted);min-height:18px;margin-top:10px}
 @media (max-width:820px){
   .brand span,.hide-m,.saved{display:none}
@@ -178,18 +178,18 @@ input.search{width:100%;height:36px;border-radius:10px;border:1px solid var(--li
     <div id="hint" class="ov"></div>
     <div id="empty"><div class="card">
       <h2>Comece seu carrossel</h2>
-      <p>Escolha um layout e toque nas molduras, ou adicione fotos direto. Você também pode arrastar arquivos para cá.</p>
-      <div class="b2"><button class="btn" data-tool="layouts">Escolher layout</button><button class="btn primary" data-tool="photos">Adicionar fotos</button></div>
+      <p>Escolha um layout e toque nas molduras, ou adicione fotos e vídeos curtos direto. Você também pode arrastar arquivos para cá.</p>
+      <div class="b2"><button class="btn" data-tool="layouts">Escolher layout</button><button class="btn primary" data-tool="photos">Adicionar fotos/vídeos</button></div>
       <p style="margin:12px 0 0"><button class="btn" data-act="slice" style="width:100%">Fatiar uma imagem pronta</button></p>
     </div></div>
     <div id="pager" class="ov"></div>
     <div id="zoom" class="ov"></div>
-    <div id="drop">Solte as fotos aqui</div>
+    <div id="drop">Solte fotos ou vídeos aqui</div>
   </section>
   <aside id="panel"></aside>
 </main>
-<input type="file" id="fileIn" accept="image/*" multiple hidden>
-<input type="file" id="fileOne" accept="image/*" hidden>
+<input type="file" id="fileIn" accept="image/*,video/*" multiple hidden>
+<input type="file" id="fileOne" accept="image/*,video/*" hidden>
 <input type="file" id="projIn" accept=".json,application/json" hidden>
 <input type="file" id="fontIn" accept=".ttf,.otf,.woff,.woff2" hidden>
 <input type="file" id="libIn" accept="image/*,.svg" multiple hidden>
@@ -210,6 +210,7 @@ const W = 1080;
 const RATIOS = { '1:1': 1080, '4:5': 1350, '3:4': 1440, '9:16': 1920 };
 const RATIO_LABEL = { '1:1': '1:1 Quadrado', '4:5': '4:5 Retrato', '3:4': '3:4 Alto', '9:16': '9:16 Story' };
 const MAX_SLIDES = 20;
+const MAX_VIDEO_S = 60; // Instagram aceita vídeos de até 60 s por slide do carrossel
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const rad = d => d * Math.PI / 180;
 const uid = () => Math.random().toString(36).slice(2, 10);
@@ -384,17 +385,30 @@ function processImage(src, w, h, M) {
   const k = Math.min(1, Math.sqrt(16e6 / (w * h))); w = Math.max(1, Math.round(w * k)); h = Math.max(1, Math.round(h * k));
   const c = document.createElement('canvas'); c.width = w; c.height = h;
   const x = c.getContext('2d', { willReadFrequently: true }); x.imageSmoothingQuality = 'high'; x.drawImage(src, 0, 0, w, h);
-  const d = x.getImageData(0, 0, w, h), p = d.data;
+  const d = x.getImageData(0, 0, w, h); applyMatrix(d.data, M);
+  x.putImageData(d, 0, 0); return c;
+}
+function applyMatrix(p, M) {
   const [a, b, cc, o0, e, f, g, o1, i, j, kk, o2] = M; const O0 = o0 * 255, O1 = o1 * 255, O2 = o2 * 255;
   for (let n = 0; n < p.length; n += 4) {
     const r = p[n], gg = p[n + 1], bb = p[n + 2];
     p[n] = a * r + b * gg + cc * bb + O0; p[n + 1] = e * r + f * gg + g * bb + O1; p[n + 2] = i * r + j * gg + kk * bb + O2;
   }
-  x.putImageData(d, 0, 0); return c;
+}
+/* vídeo com filtro: reprocessa o quadro atual num canvas reaproveitado */
+const VCACHE = new Map();
+function videoFrame(e, rec, M, max, src = rec.prev) {
+  const k = Math.min(1, max / Math.max(rec.w, rec.h)), w = Math.max(1, Math.round(rec.w * k)), h = Math.max(1, Math.round(rec.h * k));
+  const key = e.id + '|' + max; let c = VCACHE.get(key);
+  if (!c) { c = document.createElement('canvas'); VCACHE.set(key, c); }
+  if (c.width !== w || c.height !== h) { c.width = w; c.height = h; }
+  const x = c.getContext('2d', { willReadFrequently: true }); x.drawImage(src, 0, 0, w, h);
+  const d = x.getImageData(0, 0, w, h); applyMatrix(d.data, M); x.putImageData(d, 0, 0); return c;
 }
 const FCACHE = new Map(), FPEND = new Map();
 function editorSource(e, rec) {
   const M = adjMatrix(e); if (!M) return rec.prev;
+  if (rec.video) return videoFrame(e, rec, M, 720);
   const key = rec.id + '|' + M.map(v => v.toFixed(4)).join(',');
   const c = FCACHE.get(e.id);
   if (c && c.key === key) return c.canvas;
@@ -409,9 +423,15 @@ function editorSource(e, rec) {
   }
   return c ? c.canvas : rec.prev;
 }
+// na exportação, fotos com filtro são processadas uma vez só (importante nos slides com vídeo, redesenhados a cada quadro)
+function exportSrc(e, rec, o) {
+  if (rec.video || !o.cache) return exportSource(e, rec, o.out);
+  let c = o.cache.get(e.id); if (!c) { c = exportSource(e, rec, o.out); o.cache.set(e.id, c); } return c;
+}
 function exportSource(e, rec, s) {
   const M = adjMatrix(e); if (!M) return rec.img;
-  const [dw] = coverDims(e, rec); const need = Math.min(rec.w, Math.ceil(dw * s * 1.05)); const k = need / rec.w;
+  const [dw] = coverDims(e, rec);
+  if (rec.video) return videoFrame(e, rec, M, Math.min(Math.max(rec.w, rec.h), Math.ceil(dw * s * 1.05)), rec.img); const need = Math.min(rec.w, Math.ceil(dw * s * 1.05)); const k = need / rec.w;
   return processImage(rec.img, rec.w * k, rec.h * k, M);
 }
 
@@ -430,8 +450,38 @@ async function rasterizeSvg(blob) {
   const c = document.createElement('canvas'); c.width = w; c.height = h; c.getContext('2d').drawImage(img, 0, 0, w, h); URL.revokeObjectURL(url);
   return await new Promise(r => c.toBlob(r, 'image/png'));
 }
+const isVidBlob = b => (b.type && b.type.startsWith('video/')) || /\.(mp4|m4v|mov|webm|ogv)$/i.test(b.name || '');
+function makeVideo(url) {
+  const v = document.createElement('video'); v.muted = true; v.loop = true; v.playsInline = true; v.setAttribute('playsinline', ''); v.preload = 'auto'; v.src = url; return v;
+}
+function readyVideo(v) {
+  return new Promise((res, rej) => {
+    if (v.readyState >= 2) return res();
+    const t = setTimeout(() => (v.readyState >= 1 ? res() : rej(new Error('decode'))), 12000);
+    v.addEventListener('loadeddata', () => { clearTimeout(t); res(); }, { once: true });
+    v.addEventListener('error', () => { clearTimeout(t); rej(new Error('decode')); }, { once: true });
+    v.play().catch(() => { });
+  });
+}
+const once = (el, ev, ms = 4000) => new Promise(r => { const t = setTimeout(r, ms); el.addEventListener(ev, () => { clearTimeout(t); r(); }, { once: true }); });
+async function addVideoBlob(blob, id) {
+  const url = URL.createObjectURL(blob), v = makeVideo(url);
+  try {
+    await readyVideo(v);
+    let dur = v.duration;
+    if (!Number.isFinite(dur)) { v.currentTime = 1e7; await once(v, 'durationchange'); dur = v.duration; v.currentTime = 0; } // WebM gravado sem duração
+    if (!v.videoWidth) throw new Error('decode');
+    if (Number.isFinite(dur) && dur > MAX_VIDEO_S + 0.5) { const err = new Error('long'); err.dur = dur; throw err; }
+    const w = v.videoWidth, h = v.videoHeight, k = Math.min(1, 140 / Math.max(w, h));
+    const t = document.createElement('canvas'); t.width = Math.max(1, Math.round(w * k)); t.height = Math.max(1, Math.round(h * k)); t.getContext('2d').drawImage(v, 0, 0, t.width, t.height);
+    IMGS.set(id, { id, blob, url, img: v, w, h, prev: v, pw: w, ph: h, thumb: t, tw: t.width, th: t.height, alpha: false, video: true, dur: Number.isFinite(dur) ? dur : MAX_VIDEO_S });
+    v.play().catch(() => { });
+    return id;
+  } catch (err) { v.removeAttribute('src'); v.load(); URL.revokeObjectURL(url); throw err; }
+}
 async function addImageBlob(blob, id = uid()) {
   if (IMGS.has(id)) return id;
+  if (isVidBlob(blob)) return addVideoBlob(blob, id);
   if (blob.type === 'image/svg+xml' || /\.svg$/i.test(blob.name || '')) blob = await rasterizeSvg(blob);
   const url = URL.createObjectURL(blob);
   const img = await loadImg(url);
@@ -445,11 +495,15 @@ async function addImageBlob(blob, id = uid()) {
   return id;
 }
 const isImgFile = f => (f.type && f.type.startsWith('image/')) || /\.(jpe?g|png|webp|gif|avif|heic|heif|bmp|svg)$/i.test(f.name || '');
+const isMediaFile = f => isImgFile(f) || isVidBlob(f);
 async function filesToIds(files) {
   const ids = [];
   for (const f of files) {
-    if (!isImgFile(f)) continue;
-    try { ids.push(await addImageBlob(f)); } catch (err) { toast(`Não consegui abrir “${f.name}”. Formato não suportado neste navegador.`); }
+    if (!isMediaFile(f)) continue;
+    try { ids.push(await addImageBlob(f)); } catch (err) {
+      if (err && err.message === 'long') toast(`“${f.name}” tem ${Math.round(err.dur)} s. Use vídeos de até ${MAX_VIDEO_S} s.`);
+      else toast(`Não consegui abrir “${f.name}”. Formato não suportado neste navegador.`);
+    }
   }
   return ids;
 }
@@ -461,8 +515,8 @@ function freeImageEl(id, c, k = 0.82) {
   return e;
 }
 async function addFiles(files, dropPt) {
-  const list = [...files].filter(isImgFile); if (!list.length) return;
-  if (list.length > 2) toast(`Carregando ${list.length} fotos…`);
+  const list = [...files].filter(isMediaFile); if (!list.length) return;
+  if (list.length > 2) toast(`Carregando ${list.length} arquivos…`);
   const ids = await filesToIds(list); if (!ids.length) return;
   let k = 0, last = null;
   const target = ui.fillTarget ? byId(ui.fillTarget) : (dropPt ? elAt(dropPt) : null);
@@ -581,16 +635,22 @@ function drawEl(c, e, o) {
     if (e.shadow > 0) { c.save(); setShadow(c, e.shadow, o); c.fillStyle = e.stroke > 0 ? e.strokeColor : '#000'; rr(c, -w / 2, -h / 2, w, h, e.radius); c.fill(); c.restore(); }
     c.save(); rr(c, -w / 2, -h / 2, w, h, e.radius); c.clip();
     if (rec) {
-      const src = o.editor ? editorSource(e, rec) : exportSource(e, rec, o.out);
+      const src = o.editor ? editorSource(e, rec) : exportSrc(e, rec, o);
       const [dw, dh] = coverDims(e, rec);
       c.translate(e.img.ox || 0, e.img.oy || 0); if (e.flip) c.scale(-1, 1);
       c.imageSmoothingQuality = 'high'; c.drawImage(src, -dw / 2, -dh / 2, dw, dh);
     } else drawPlaceholder(c, w, h);
     c.restore();
+    if (o.editor && rec && rec.video) drawVideoBadge(c, e);
     if (e.stroke > 0) { c.lineWidth = e.stroke; c.strokeStyle = e.strokeColor; rr(c, -w / 2 + e.stroke / 2, -h / 2 + e.stroke / 2, w - e.stroke, h - e.stroke, Math.max(0, e.radius - e.stroke / 2)); c.stroke(); }
   } else if (e.type === 'text') drawText(c, e, o);
   else if (e.type === 'shape') drawShape(c, e, o);
   c.restore();
+}
+function drawVideoBadge(c, e) { // só no editor: indica que a moldura tem vídeo
+  const s = clamp(Math.min(e.w, e.h) * 0.09, 28, 64), x = -e.w / 2 + s * 0.4, y = -e.h / 2 + s * 0.4;
+  c.save(); c.globalAlpha = 0.85; c.fillStyle = 'rgba(0,0,0,.6)'; rr(c, x, y, s * 1.5, s, s * 0.25); c.fill();
+  c.fillStyle = '#fff'; c.beginPath(); c.moveTo(x + s * 0.55, y + s * 0.25); c.lineTo(x + s * 1.05, y + s * 0.5); c.lineTo(x + s * 0.55, y + s * 0.75); c.closePath(); c.fill(); c.restore();
 }
 function drawText(c, e, o) {
   ensureFont(e); const L = layoutText(e); const w = e.w, h = e.h, lh = e.size * e.lh;
@@ -613,9 +673,10 @@ function drawCut(c, e, rec, o) {
   const s = e.stroke || 0, pad = s + 2, W2 = e.w + 2 * pad, H2 = e.h + 2 * pad;
   let px = o.px; const lim = o.editor ? 6e6 : 40e6; if (W2 * H2 * px * px > lim) px = Math.sqrt(lim / (W2 * H2));
   const cw = Math.max(1, Math.ceil(W2 * px)), ch = Math.max(1, Math.ceil(H2 * px));
-  const src = o.editor ? editorSource(e, rec) : exportSource(e, rec, o.out);
+  const src = o.editor ? editorSource(e, rec) : exportSrc(e, rec, o);
   const key = o.editor ? [rec.id, e.w, e.h, e.img.s, e.img.ox, e.img.oy, e.flip, s, e.strokeColor, cw, ch, src === rec.prev ? 'p' : (FCACHE.get(e.id) || {}).key].join('|') : null;
-  let out = null;
+  let out = null; const ck = !o.editor && o.cache ? 'cut' + e.id : null;
+  if (ck) out = o.cache.get(ck) || null;
   if (key) { const hit = CUTC.get(e.id); if (hit && hit.key === key) out = hit.c; }
   if (!out) {
     const mk = () => { const k = document.createElement('canvas'); k.width = cw; k.height = ch; return k; };
@@ -630,6 +691,7 @@ function drawCut(c, e, rec, o) {
       fx.drawImage(base, 0, 0); out = fin; sil.width = 0;
     }
     if (key) { const old = CUTC.get(e.id); if (old && old.c !== out) old.c.width = 0; CUTC.set(e.id, { key, c: out }); }
+    if (ck) o.cache.set(ck, out);
   }
   if (e.shadow > 0) setShadow(c, e.shadow, o);
   c.drawImage(out, -cw / (2 * px), -ch / (2 * px), cw / px, ch / px);
@@ -685,6 +747,20 @@ function resize() {
   }
   dirty();
 }
+/* vídeos no editor: tocam mudos em loop; o canvas é redesenhado ~30x/s */
+const isVidEl = e => e.type === 'image' && e.img && IMGS.get(e.img.id) && IMGS.get(e.img.id).video;
+let vLast = 0, vSync = 0;
+function syncVideos() {
+  const used = new Set(S.els.filter(isVidEl).map(e => e.img.id));
+  for (const r of IMGS.values()) if (r.video && r.img === r.prev) { if (used.has(r.id) && !document.hidden) { if (r.img.paused) r.img.play().catch(() => { }); } else if (!r.img.paused) r.img.pause(); }
+  return used.size > 0;
+}
+function videoTick(t) {
+  if (t - vSync > 500) { vSync = t; videoTick.on = syncVideos(); }
+  if (videoTick.on && !document.hidden && t - vLast > 32) { vLast = t; dirty(); }
+  requestAnimationFrame(videoTick);
+}
+requestAnimationFrame(videoTick);
 let prefZ = 0;
 const availH = () => Math.max(80, CH - 100);
 function fitAll() { view.z = prefZ = Math.min((CW - 48) / TW(), availH() / H()); view.x = (CW - TW() * view.z) / 2; view.y = 34 + (availH() - H() * view.z) / 2; dirty(); }
@@ -963,7 +1039,7 @@ stage.addEventListener('drop', e => { e.preventDefault(); dragDepth = 0; $('#dro
 let CLIP = null;
 document.addEventListener('paste', e => {
   if (e.target.matches && e.target.matches('input,textarea')) return;
-  const files = [...(e.clipboardData?.files || [])].filter(isImgFile);
+  const files = [...(e.clipboardData?.files || [])].filter(isMediaFile);
   if (files.length) { e.preventDefault(); addFiles(files); return; }
   if (CLIP) { const c = JSON.parse(CLIP); c.id = uid(); c.x += 40; c.y += 40; S.els.push(c); CLIP = JSON.stringify(c); commit(); select(c.id); }
 });
@@ -1046,6 +1122,7 @@ const ACT = {
   front() { const s = selEl(); if (!s) return; S.els = S.els.filter(e => e !== s); S.els.push(s); commit(); dirty(); },
   back() { const s = selEl(); if (!s) return; S.els = S.els.filter(e => e !== s); S.els.unshift(s); commit(); dirty(); },
   keepRatio() { const s = selEl(); if (!s) return; s.keepRatio = !ratioLocked(s); commit(); renderPanel(); dirty(); },
+  vSound() { const s = selEl(); if (!s) return; s.mute = !s.mute; commit(); renderPanel(); },
   lock() { const s = selEl(); if (!s) return; s.locked = !s.locked; commit(); renderPanel(); dirty(); },
   replace() { const s = selEl(); if (!s) return; ui.replaceTarget = s.id; $('#fileOne').click(); },
   adjust() { ui.adjust = !ui.adjust; renderPanel(); dirty(); },
@@ -1174,9 +1251,10 @@ function posActs() {
 }
 function panelImage(el) {
   const rec = el.img && IMGS.get(el.img.id);
-  let h = head(el.tag === 'bgimg' ? 'Imagem de fundo' : el.img ? (el.cut ? 'Recorte' : 'Foto') : 'Moldura vazia');
+  let h = head(el.tag === 'bgimg' ? 'Imagem de fundo' : el.img ? (rec && rec.video ? 'Vídeo' : el.cut ? 'Recorte' : 'Foto') : 'Moldura vazia');
   h += `<div class="acts" style="margin-bottom:6px">${A('replace', 'swap', el.img ? 'Trocar' : 'Escolher')}${el.img ? A('adjust', 'move', 'Enquadrar', ui.adjust) : ''}${el.img ? A('flip', 'flip', 'Espelhar', el.flip) : ''}${A('del', 'trash', 'Excluir', false, 'danger')}</div>`;
   h += commonActs(el);
+  if (rec && rec.video) h += `<label class="chk" style="margin-top:8px"><input type="checkbox" data-act="vSound" ${el.mute ? '' : 'checked'}> Som do vídeo na exportação</label><p class="note" style="margin:2px 0 0">${Math.round(rec.dur)} s · no editor o vídeo toca sem som. Os slides em que ele aparece são exportados como vídeo.</p>`;
   h += `<label class="chk" style="margin-top:8px"><input type="checkbox" data-act="keepRatio" ${ratioLocked(el) ? 'checked' : ''}> Manter proporção ao redimensionar</label>`;
   if (el.img && (el.cut || (rec && rec.alpha))) h += `<label class="chk" style="margin-top:8px"><input type="checkbox" data-act="cut" ${el.cut ? 'checked' : ''}> Recorte: contorno e sombra seguem a figura</label>`;
   if (el.img) {
@@ -1270,7 +1348,7 @@ function panelProject() {
   Scroll = andar pelos slides · <kbd>Ctrl</kbd>+scroll = zoom<br>
   <kbd>Shift</kbd> ao redimensionar inverte a trava de proporção · <kbd>Alt</kbd> desliga o ímã<br>
   <kbd>Ctrl</kbd>+<kbd>V</kbd> cola imagens da área de transferência</p>
-  <div class="sec">Privacidade</div><p class="note">Tudo roda neste navegador. As fotos não são enviadas para nenhum servidor; o projeto fica salvo automaticamente aqui (IndexedDB). Use “Salvar .json” para levar o projeto para outro computador.</p>`;
+  <div class="sec">Privacidade</div><p class="note">Tudo roda neste navegador. As fotos e vídeos não são enviados para nenhum servidor; o projeto fica salvo automaticamente aqui (IndexedDB). Use “Salvar .json” para levar o projeto para outro computador.</p>`;
 }
 function syncPanel(all) {
   const p = $('#panel');
@@ -1501,10 +1579,66 @@ async function waitFonts() {
   await Promise.all(S.els.filter(e => e.type === 'text').map(e => document.fonts.load(`${e.italic ? 'italic ' : ''}${e.weight} 40px ${fam(e.font)}`).catch(() => { })));
   TL = new WeakMap();
 }
+function drawRegion(x, x0, wWorld, outW, cache) {
+  const s = outW / wWorld; x.setTransform(s, 0, 0, s, -x0 * s, 0); x.imageSmoothingQuality = 'high';
+  drawBg(x); for (const e of S.els) drawEl(x, e, { editor: false, px: s, out: s, cache });
+}
 function renderRegion(x0, wWorld, outW) {
   const s = outW / wWorld, c = document.createElement('canvas'); c.width = Math.round(outW); c.height = Math.round(H() * s);
-  const x = c.getContext('2d'); x.imageSmoothingQuality = 'high'; x.scale(s, s); x.translate(-x0, 0);
-  drawBg(x); for (const e of S.els) drawEl(x, e, { editor: false, px: s, out: s }); return c;
+  drawRegion(c.getContext('2d'), x0, wWorld, outW); return c;
+}
+/* ---------- slides com vídeo ---------- */
+function slideVideoEls(i) {
+  return S.els.filter(e => { if (!isVidEl(e) || !(e.opacity > 0)) return false; const b = aabb(e); return b.x1 > i * W && b.x0 < (i + 1) * W && b.y1 > 0 && b.y0 < H(); });
+}
+const slideHasVideo = i => slideVideoEls(i).length > 0;
+function pickVideoMime() {
+  if (!window.MediaRecorder || !HTMLCanvasElement.prototype.captureStream) return null;
+  for (const m of ['video/mp4;codecs=avc1.42E01F,mp4a.40.2', 'video/mp4;codecs=avc1,mp4a.40.2', 'video/mp4', 'video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm'])
+    if (MediaRecorder.isTypeSupported(m)) return m;
+  return null;
+}
+// Grava o slide em tempo real: toca cópias dos vídeos, desenha o slide a cada quadro e captura o canvas (+ áudio).
+async function recordSlide(i, outW, mime, ac, onProg) {
+  const els = slideVideoEls(i), recs = [...new Set(els.map(e => e.img.id))].map(id => IMGS.get(id));
+  const audible = new Set(els.filter(e => !e.mute).map(e => e.img.id));
+  const dur = Math.min(MAX_VIDEO_S, Math.max(...recs.map(r => r.dur)));
+  const swaps = recs.map(r => ({ r, orig: r.img, v: makeVideo(r.url) }));
+  const c = document.createElement('canvas'); c.width = Math.round(outW); c.height = Math.round(H() * outW / W);
+  const x = c.getContext('2d'), cache = new Map();
+  try {
+    await Promise.all(swaps.map(s => readyVideo(s.v)));
+    for (const s of swaps) { s.v.pause(); s.v.currentTime = 0; s.r.img = s.v; }
+    await Promise.all(swaps.map(s => s.v.readyState >= 2 && !s.v.seeking ? null : once(s.v, 'seeked', 3000)));
+    const draw = () => drawRegion(x, i * W, W, outW, cache);
+    draw();
+    const stream = c.captureStream(30);
+    let mutedAll = false;
+    if (ac && audible.size) {
+      const dest = ac.createMediaStreamDestination();
+      for (const s of swaps) if (audible.has(s.r.id)) { s.v.muted = false; ac.createMediaElementSource(s.v).connect(dest); }
+      const tr = dest.stream.getAudioTracks()[0]; if (tr) stream.addTrack(tr);
+    }
+    const mr = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 8e6 });
+    const chunks = []; mr.ondataavailable = ev => { if (ev.data && ev.data.size) chunks.push(ev.data); };
+    for (const s of swaps) { try { await s.v.play(); } catch (_) { s.v.muted = true; mutedAll = true; await s.v.play().catch(() => { }); } }
+    mr.start(250);
+    const t0 = performance.now();
+    await new Promise(res => {
+      const step = () => {
+        draw(); const t = (performance.now() - t0) / 1000;
+        if (onProg) onProg(Math.min(1, t / dur));
+        if (t >= dur) res(); else setTimeout(step, 1000 / 30);
+      };
+      step();
+    });
+    const stopped = once(mr, 'stop', 5000); mr.stop(); await stopped;
+    stream.getTracks().forEach(t => t.stop());
+    if (mutedAll) toast('O navegador bloqueou o som de um vídeo; ele saiu sem áudio.');
+    return new Blob(chunks, { type: mime.split(';')[0] });
+  } finally {
+    for (const s of swaps) { s.r.img = s.orig; s.v.pause(); s.v.removeAttribute('src'); s.v.load(); }
+  }
 }
 const renderSlide = (i, outW) => renderRegion(i * W, W, outW);
 const toBlob = (c, type, q) => new Promise(r => c.toBlob(r, type, q));
@@ -1534,11 +1668,18 @@ function closeModal() { $('#modal').classList.remove('show'); $('#mbox').innerHT
 $('#modal').addEventListener('click', e => { if (e.target.id === 'modal') closeModal(); });
 async function openPreview() {
   select(null); await waitFonts();
-  const urls = []; for (let i = 0; i < S.slides; i++) urls.push(URL.createObjectURL(await toBlob(renderSlide(i, 720), 'image/jpeg', 0.88)));
+  const PW = 720, ph = Math.round(H() * PW / W), live = range(S.slides).filter(slideHasVideo);
+  const urls = []; for (let i = 0; i < S.slides; i++) urls.push(live.includes(i) ? null : URL.createObjectURL(await toBlob(renderSlide(i, PW), 'image/jpeg', 0.88)));
+  const cell = (u, i) => u ? `<img src="${u}" alt="">` : `<canvas width="${PW}" height="${ph}" data-live="${i}"></canvas>`;
   openModal(`<div class="ph"><h3>Pré-visualização</h3><button class="btn icon" data-act="closeModal">${I('x')}</button></div>
-  <div class="phone"><div class="top"><span class="av"></span>seu_perfil</div><div class="pvwrap"><div class="pv" id="pv">${urls.map(u => `<img src="${u}" alt="">`).join('')}</div><span class="pvcount" id="pvc">1/${S.slides}</span></div><div class="dots" id="dots">${urls.map((_, i) => `<i class="${i ? '' : 'on'}"></i>`).join('')}</div></div>
-  <div class="strip">${urls.map(u => `<img src="${u}" alt="">`).join('')}</div>
+  <div class="phone"><div class="top"><span class="av"></span>seu_perfil</div><div class="pvwrap"><div class="pv" id="pv">${urls.map(cell).join('')}</div><span class="pvcount" id="pvc">1/${S.slides}</span></div><div class="dots" id="dots">${urls.map((_, i) => `<i class="${i ? '' : 'on'}"></i>`).join('')}</div></div>
+  <div class="strip">${urls.map(cell).join('')}</div>
   <p class="note" style="margin-top:10px">Deslize para conferir as emendas. A faixa embaixo mostra o carrossel inteiro.</p>`);
+  if (live.length) {
+    const cs = [...document.querySelectorAll('#mbox canvas[data-live]')], cache = new Map(); let last = 0;
+    const loop = t => { if (!cs[0].isConnected) return; if (t - last > 32) { last = t; cs.forEach(c => drawRegion(c.getContext('2d'), +c.dataset.live * W, W, PW, cache)); } requestAnimationFrame(loop); };
+    requestAnimationFrame(loop);
+  }
   const pv = $('#pv'); pv.addEventListener('scroll', () => { const i = Math.round(pv.scrollLeft / pv.clientWidth); $('#pvc').textContent = `${i + 1}/${S.slides}`; document.querySelectorAll('#dots i').forEach((d, k) => d.classList.toggle('on', k === i)); });
 }
 function openExport(keep) {
@@ -1551,18 +1692,31 @@ function openExport(keep) {
   <div class="sec">Slides</div><div class="chips">${range(S.slides).map(i => `<button class="chip ${ex.pick.has(i) ? 'on' : ''}" data-act="expPick" data-arg="${i}">${i + 1}</button>`).join('')}<button class="chip" data-act="expAll">Todos</button><button class="chip" data-act="expNone">Nenhum</button></div>
   <div class="bgrid" style="margin-top:16px"><button class="btn primary" data-act="dlZip">${I('zip')} Baixar ZIP</button><button class="btn" data-act="dlEach">${I('download')} Baixar imagens</button>${canShare ? `<button class="btn" data-act="dlShare" style="grid-column:span 2">${I('share')} Compartilhar (celular)</button>` : ''}<button class="btn" data-act="dlStrip" style="grid-column:span 2">${I('fit')} Faixa inteira numa imagem só</button></div>
   <div class="prog" id="prog"></div>
+  ${(() => { const vs = range(S.slides).filter(slideHasVideo); if (!vs.length) return ''; const m = pickVideoMime();
+    return `<p class="note" style="color:var(--text)">🎬 Slide${vs.length > 1 ? 's' : ''} ${vs.map(i => i + 1).join(', ')} ${vs.length > 1 ? 'têm' : 'tem'} vídeo e ${m ? `sai${vs.length > 1 ? 'em' : ''} como vídeo <b>${m.startsWith('video/mp4') ? 'MP4' : 'WebM'}</b> (1080 px). A gravação leva o tempo do vídeo: mantenha esta aba aberta.${m.startsWith('video/mp4') ? '' : ' Este navegador só grava WebM; para postar no Instagram, prefira exportar no Safari ou num Chrome atualizado (MP4).'}` : 'este navegador não consegue gravar vídeo, então sairá como imagem (um quadro). Use Chrome, Edge ou Safari atualizados.'}</p>`; })()}
   <p class="note">Tamanho final: ${ex.size} × ${Math.round(H() * ex.size / W)} px por slide (${S.ratio}). O Instagram usa 1080 px de largura; 2160 é útil para arquivar. Publique as imagens na ordem dos números do arquivo.</p>`);
   const q = $('#expQ'); if (q) q.addEventListener('input', () => { ex.q = +q.value; $('#expQv').textContent = Math.round(ex.q * 100) + '%'; });
 }
 async function doExport(mode) {
   const ex = ui.exp, idx = [...ex.pick].sort((a, b) => a - b); if (!idx.length && mode !== 'strip') { toast('Selecione pelo menos um slide.'); return; }
   const prog = $('#prog'), type = ex.fmt === 'jpg' ? 'image/jpeg' : 'image/png', ext = ex.fmt === 'jpg' ? 'jpg' : 'png';
+  const mime = mode === 'strip' ? null : pickVideoMime(), vidIdx = mime ? idx.filter(slideHasVideo) : [];
+  // o AudioContext é criado ainda dentro do clique, senão o navegador pode bloquear o som
+  const AC = window.AudioContext || window.webkitAudioContext;
+  const ac = vidIdx.length && AC && vidIdx.some(i => slideVideoEls(i).some(e => !e.mute)) ? new AC() : null;
+  if (ac && ac.state === 'suspended') ac.resume().catch(() => { });
   document.querySelectorAll('#mbox .btn').forEach(b => b.disabled = true);
   try {
     await waitFonts(); const files = [];
     for (const i of (mode === 'strip' ? [] : idx)) {
+      const nm = `carrossel_${String(i + 1).padStart(2, '0')}`;
+      if (vidIdx.includes(i)) {
+        const vext = mime.startsWith('video/mp4') ? 'mp4' : 'webm';
+        const b = await recordSlide(i, Math.min(ex.size, 1080), mime, ac, k => { if (prog) prog.textContent = `Gravando vídeo do slide ${i + 1}… ${Math.round(k * 100)}%`; });
+        files.push({ name: `${nm}.${vext}`, blob: b }); continue;
+      }
       if (prog) prog.textContent = `Renderizando slide ${i + 1}…`; await new Promise(r => setTimeout(r, 16));
-      const b = await toBlob(renderSlide(i, ex.size), type, ex.q); files.push({ name: `carrossel_${String(i + 1).padStart(2, '0')}.${ext}`, blob: b });
+      const b = await toBlob(renderSlide(i, ex.size), type, ex.q); files.push({ name: `${nm}.${ext}`, blob: b });
     }
     if (mode === 'strip') {
       if (prog) prog.textContent = 'Renderizando a faixa inteira…'; await new Promise(r => setTimeout(r, 16));
@@ -1577,11 +1731,12 @@ async function doExport(mode) {
     } else if (mode === 'each') {
       for (const f of files) { download(f.blob, f.name); await new Promise(r => setTimeout(r, 400)); }
     } else {
-      const fl = files.map(f => new File([f.blob], f.name, { type }));
+      const fl = files.map(f => new File([f.blob], f.name, { type: f.blob.type || type }));
       if (navigator.canShare && navigator.canShare({ files: fl })) await navigator.share({ files: fl }); else { toast('Este navegador não permite compartilhar arquivos. Use “Baixar”.'); }
     }
-    if (prog) prog.textContent = `Pronto: ${files.length} imagem(ns).`;
+    if (prog) prog.textContent = vidIdx.length ? `Pronto: ${files.length - vidIdx.length} imagem(ns) e ${vidIdx.length} vídeo(s).` : `Pronto: ${files.length} imagem(ns).`;
   } catch (err) { console.warn(err); if (prog) prog.textContent = err && err.name === 'AbortError' ? 'Compartilhamento cancelado.' : 'Algo deu errado na exportação.'; }
+  if (ac) ac.close().catch(() => { });
   document.querySelectorAll('#mbox .btn').forEach(b => b.disabled = false);
 }
 
@@ -1614,7 +1769,7 @@ async function init() {
   setSaved(S.els.length ? 'Salvo neste navegador' : '');
   new ResizeObserver(() => { const had = CW; resize(); if (!had) fitInitial(); }).observe($('#stage'));
   matchMedia('(max-width: 820px)').addEventListener('change', () => { updHeader(); renderPanel(); });
-  document.addEventListener('visibilitychange', () => { if (document.hidden) { clearTimeout(saveT); saveNow(); } });
+  document.addEventListener('visibilitychange', () => { if (document.hidden) { clearTimeout(saveT); saveNow(); } videoTick.on = syncVideos(); });
 }
 init();
 if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
