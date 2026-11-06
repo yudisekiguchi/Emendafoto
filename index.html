@@ -210,7 +210,8 @@ const W = 1080;
 const RATIOS = { '1:1': 1080, '4:5': 1350, '3:4': 1440, '9:16': 1920 };
 const RATIO_LABEL = { '1:1': '1:1 Quadrado', '4:5': '4:5 Retrato', '3:4': '3:4 Alto', '9:16': '9:16 Story' };
 const MAX_SLIDES = 20;
-const MAX_VIDEO_S = 60; // Instagram aceita vídeos de até 60 s por slide do carrossel
+const MAX_VIDEO_S = 60;   // Instagram aceita até 60 s por slide: é o tamanho máximo do trecho
+const MAX_SOURCE_S = 600; // vídeo original pode ter até 10 min; escolhe-se o trecho no painel
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const rad = d => d * Math.PI / 180;
 const uid = () => Math.random().toString(36).slice(2, 10);
@@ -298,7 +299,18 @@ function clampImg(e) {
   const [dw, dh] = coverDims(e, rec); const mx = Math.max(0, (dw - e.w) / 2), my = Math.max(0, (dh - e.h) / 2);
   e.img.ox = clamp(e.img.ox || 0, -mx, mx); e.img.oy = clamp(e.img.oy || 0, -my, my);
 }
-function setFrameImage(e, id) { e.img = { id, s: 1, ox: 0, oy: 0 }; const r = IMGS.get(id); e.cut = !!(r && r.alpha); FCACHE.delete(e.id); }
+function setFrameImage(e, id) {
+  e.img = { id, s: 1, ox: 0, oy: 0 }; const r = IMGS.get(id); e.cut = !!(r && r.alpha); FCACHE.delete(e.id);
+  if (r && r.video) e.trim = { a: 0, b: Math.min(r.dur, MAX_VIDEO_S) }; else delete e.trim;
+}
+// trecho do vídeo usado por esta moldura (início a, fim b, em segundos)
+function trimOf(e, rec) {
+  const d = rec.dur, t = e.trim || {};
+  let a = clamp(+t.a || 0, 0, Math.max(0, d - 0.5)), b = clamp(t.b == null ? Math.min(d, MAX_VIDEO_S) : +t.b, 0, d);
+  if (b - a < 0.5) b = Math.min(d, a + 0.5);
+  if (b - a > MAX_VIDEO_S) b = a + MAX_VIDEO_S;
+  return { a, b };
+}
 
 /* ---------- texto ---------- */
 const mctx = document.createElement('canvas').getContext('2d');
@@ -407,8 +419,8 @@ function videoFrame(e, rec, M, max, src = rec.prev) {
 }
 const FCACHE = new Map(), FPEND = new Map();
 function editorSource(e, rec) {
+  if (rec.video) { const v = playerFor(e, rec); if (v.readyState < 2) return rec.prev; const M = adjMatrix(e); return M ? videoFrame(e, rec, M, 720, v) : v; }
   const M = adjMatrix(e); if (!M) return rec.prev;
-  if (rec.video) return videoFrame(e, rec, M, 720);
   const key = rec.id + '|' + M.map(v => v.toFixed(4)).join(',');
   const c = FCACHE.get(e.id);
   if (c && c.key === key) return c.canvas;
@@ -425,13 +437,18 @@ function editorSource(e, rec) {
 }
 // na exportação, fotos com filtro são processadas uma vez só (importante nos slides com vídeo, redesenhados a cada quadro)
 function exportSrc(e, rec, o) {
-  if (rec.video || !o.cache) return exportSource(e, rec, o.out);
+  if (rec.video) {
+    const v = (o.vmap && o.vmap.get(e.id)) || playerFor(e, rec); if (v.readyState < 2) return rec.prev;
+    const M = adjMatrix(e); if (!M) return v;
+    const [dw] = coverDims(e, rec); return videoFrame(e, rec, M, Math.min(Math.max(rec.w, rec.h), Math.ceil(dw * o.out * 1.05)), v);
+  }
+  if (!o.cache) return exportSource(e, rec, o.out);
   let c = o.cache.get(e.id); if (!c) { c = exportSource(e, rec, o.out); o.cache.set(e.id, c); } return c;
 }
 function exportSource(e, rec, s) {
   const M = adjMatrix(e); if (!M) return rec.img;
   const [dw] = coverDims(e, rec);
-  if (rec.video) return videoFrame(e, rec, M, Math.min(Math.max(rec.w, rec.h), Math.ceil(dw * s * 1.05)), rec.img); const need = Math.min(rec.w, Math.ceil(dw * s * 1.05)); const k = need / rec.w;
+  const need = Math.min(rec.w, Math.ceil(dw * s * 1.05)); const k = need / rec.w;
   return processImage(rec.img, rec.w * k, rec.h * k, M);
 }
 
@@ -471,11 +488,13 @@ async function addVideoBlob(blob, id) {
     let dur = v.duration;
     if (!Number.isFinite(dur)) { v.currentTime = 1e7; await once(v, 'durationchange'); dur = v.duration; v.currentTime = 0; } // WebM gravado sem duração
     if (!v.videoWidth) throw new Error('decode');
-    if (Number.isFinite(dur) && dur > MAX_VIDEO_S + 0.5) { const err = new Error('long'); err.dur = dur; throw err; }
-    const w = v.videoWidth, h = v.videoHeight, k = Math.min(1, 140 / Math.max(w, h));
-    const t = document.createElement('canvas'); t.width = Math.max(1, Math.round(w * k)); t.height = Math.max(1, Math.round(h * k)); t.getContext('2d').drawImage(v, 0, 0, t.width, t.height);
-    IMGS.set(id, { id, blob, url, img: v, w, h, prev: v, pw: w, ph: h, thumb: t, tw: t.width, th: t.height, alpha: false, video: true, dur: Number.isFinite(dur) ? dur : MAX_VIDEO_S });
-    v.play().catch(() => { });
+    if (Number.isFinite(dur) && dur > MAX_SOURCE_S + 0.5) { const err = new Error('long'); err.dur = dur; throw err; }
+    v.pause(); if (v.currentTime > 0.05) { v.currentTime = 0; await once(v, 'seeked', 2000); }
+    const w = v.videoWidth, h = v.videoHeight;
+    const snap = max => { const k = Math.min(1, max / Math.max(w, h)), c = document.createElement('canvas'); c.width = Math.max(1, Math.round(w * k)); c.height = Math.max(1, Math.round(h * k)); c.getContext('2d').drawImage(v, 0, 0, c.width, c.height); return c; };
+    const t = snap(140), poster = snap(640); // capa: aparece enquanto o player da moldura carrega
+    IMGS.set(id, { id, blob, url, img: poster, w, h, prev: poster, pw: poster.width, ph: poster.height, thumb: t, tw: t.width, th: t.height, alpha: false, video: true, dur: Number.isFinite(dur) ? dur : MAX_VIDEO_S });
+    v.removeAttribute('src'); v.load();
     return id;
   } catch (err) { v.removeAttribute('src'); v.load(); URL.revokeObjectURL(url); throw err; }
 }
@@ -501,7 +520,7 @@ async function filesToIds(files) {
   for (const f of files) {
     if (!isMediaFile(f)) continue;
     try { ids.push(await addImageBlob(f)); } catch (err) {
-      if (err && err.message === 'long') toast(`“${f.name}” tem ${Math.round(err.dur)} s. Use vídeos de até ${MAX_VIDEO_S} s.`);
+      if (err && err.message === 'long') toast(`“${f.name}” tem ${Math.round(err.dur / 60)} min. Use vídeos de até ${MAX_SOURCE_S / 60} min (depois você escolhe o trecho).`);
       else toast(`Não consegui abrir “${f.name}”. Formato não suportado neste navegador.`);
     }
   }
@@ -530,6 +549,7 @@ async function addFiles(files, dropPt) {
     const e = freeImageEl(ids[k], c); S.els.push(e); last = e; si = Math.min(S.slides - 1, si + 1);
   }
   commit(); if (last) select(last.id); dirty();
+  if (ids.some(id => IMGS.get(id).video && IMGS.get(id).dur > MAX_VIDEO_S + 0.5)) setTimeout(() => toast(`Vídeo com mais de ${MAX_VIDEO_S} s: escolha o trecho em “Trecho”, no painel do vídeo.`), 1200);
 }
 
 /* ---------- layouts ---------- */
@@ -577,7 +597,7 @@ function applyTemplate(id) {
     const e = newFrame(f.x, f.y, f.w, f.h); e.radius = r;
     if (f.st) Object.assign(e, f.st);
     const src = used[i];
-    if (src) { setFrameImage(e, src.img.id); e.adj = { ...src.adj }; e.flip = src.flip; if (e.cut) e.cut = !!src.cut; }
+    if (src) { setFrameImage(e, src.img.id); e.adj = { ...src.adj }; e.flip = src.flip; if (e.cut) e.cut = !!src.cut; if (src.trim) e.trim = { ...src.trim }; e.mute = src.mute; }
     return e;
   });
   const bgs = S.els.filter(e => e.tag === 'bgimg');
@@ -647,10 +667,17 @@ function drawEl(c, e, o) {
   else if (e.type === 'shape') drawShape(c, e, o);
   c.restore();
 }
-function drawVideoBadge(c, e) { // só no editor: indica que a moldura tem vídeo
-  const s = clamp(Math.min(e.w, e.h) * 0.09, 28, 64), x = -e.w / 2 + s * 0.4, y = -e.h / 2 + s * 0.4;
-  c.save(); c.globalAlpha = 0.85; c.fillStyle = 'rgba(0,0,0,.6)'; rr(c, x, y, s * 1.5, s, s * 0.25); c.fill();
-  c.fillStyle = '#fff'; c.beginPath(); c.moveTo(x + s * 0.55, y + s * 0.25); c.lineTo(x + s * 1.05, y + s * 0.5); c.lineTo(x + s * 0.55, y + s * 0.75); c.closePath(); c.fill(); c.restore();
+function badgeBox(e) { // botão ▶/❚❚ no canto da moldura (coordenadas locais)
+  const s = Math.min((lastPT === 'mouse' ? 30 : 40) / view.z, Math.min(e.w, e.h) * 0.3), m = s * 0.3;
+  return { x: -e.w / 2 + m, y: -e.h / 2 + m, w: s * 1.4, h: s, s };
+}
+function inBadge(e, p) { const l = toLocal(e, p), b = badgeBox(e), pad = b.s * 0.2; return l.x >= b.x - pad && l.x <= b.x + b.w + pad && l.y >= b.y - pad && l.y <= b.y + b.h + pad; }
+function drawVideoBadge(c, e) { // só no editor
+  const { x, y, w, h, s } = badgeBox(e), pl = PLAYERS.get(e.id), on = pl && !pl.v.paused;
+  c.save(); c.globalAlpha = 0.9; c.fillStyle = on ? 'rgba(139,108,255,.9)' : 'rgba(0,0,0,.65)'; rr(c, x, y, w, h, s * 0.25); c.fill(); c.fillStyle = '#fff';
+  if (on) { c.fillRect(x + w * 0.34, y + h * 0.27, s * 0.13, h * 0.46); c.fillRect(x + w * 0.56, y + h * 0.27, s * 0.13, h * 0.46); }
+  else { c.beginPath(); c.moveTo(x + w * 0.38, y + h * 0.25); c.lineTo(x + w * 0.68, y + h * 0.5); c.lineTo(x + w * 0.38, y + h * 0.75); c.closePath(); c.fill(); }
+  c.restore();
 }
 function drawText(c, e, o) {
   ensureFont(e); const L = layoutText(e); const w = e.w, h = e.h, lh = e.size * e.lh;
@@ -748,16 +775,39 @@ function resize() {
   dirty();
 }
 /* vídeos no editor: tocam mudos em loop; o canvas é redesenhado ~30x/s */
+/* vídeos no editor: ficam parados no início do trecho e só tocam (sem som) quando você aperta ▶ */
 const isVidEl = e => e.type === 'image' && e.img && IMGS.get(e.img.id) && IMGS.get(e.img.id).video;
-let vLast = 0, vSync = 0;
-function syncVideos() {
-  const used = new Set(S.els.filter(isVidEl).map(e => e.img.id));
-  for (const r of IMGS.values()) if (r.video && r.img === r.prev) { if (used.has(r.id) && !document.hidden) { if (r.img.paused) r.img.play().catch(() => { }); } else if (!r.img.paused) r.img.pause(); }
-  return used.size > 0;
+const PLAYERS = new Map(); // id da moldura -> { v, recId }
+function playerFor(e, rec) {
+  const p = PLAYERS.get(e.id); if (p && p.recId === rec.id) return p.v;
+  if (p) dropPlayer(e.id);
+  const v = makeVideo(rec.url), id = e.id;
+  const toStart = () => { const el = byId(id); if (el && v.paused) v.currentTime = trimOf(el, rec).a; };
+  v.addEventListener('loadeddata', toStart, { once: true }); v.addEventListener('seeked', dirty);
+  v.play().then(() => { v.pause(); toStart(); }).catch(() => { }); // força o carregamento do 1º quadro (iPhone)
+  PLAYERS.set(id, { v, recId: rec.id }); return v;
 }
+function dropPlayer(id) { const p = PLAYERS.get(id); if (!p) return; p.v.pause(); p.v.removeAttribute('src'); p.v.load(); PLAYERS.delete(id); for (const k of VCACHE.keys()) if (k.startsWith(id + '|')) VCACHE.delete(k); }
+const isPlaying = e => { const p = PLAYERS.get(e.id); return !!(p && !p.v.paused); };
+function togglePlay(e) {
+  const rec = IMGS.get(e.img.id), v = playerFor(e, rec), { a, b } = trimOf(e, rec);
+  if (v.paused) { if (v.currentTime < a - 0.05 || v.currentTime >= b - 0.05) v.currentTime = a; v.play().catch(() => { }); } else v.pause();
+  setTimeout(() => { dirty(); if (ui.sel === e.id) renderPanel(); }, 30);
+}
+function pauseAll() { for (const p of PLAYERS.values()) if (!p.v.paused) p.v.pause(); dirty(); }
+let vLast = 0, vSync = 0;
 function videoTick(t) {
-  if (t - vSync > 500) { vSync = t; videoTick.on = syncVideos(); }
-  if (videoTick.on && !document.hidden && t - vLast > 32) { vLast = t; dirty(); }
+  if (t - vSync > 1000) { // libera players de molduras que não existem mais (ou trocaram de vídeo)
+    vSync = t;
+    for (const [id, p] of PLAYERS) { const e = byId(id); if (!e || !e.img || e.img.id !== p.recId) dropPlayer(id); }
+  }
+  let any = false;
+  for (const [id, p] of PLAYERS) {
+    if (p.v.paused) continue; any = true;
+    const e = byId(id), rec = IMGS.get(p.recId); if (!e || !rec) continue;
+    const { a, b } = trimOf(e, rec); if (p.v.currentTime >= b - 0.03 || p.v.currentTime < a - 0.3) p.v.currentTime = a; // repete só o trecho
+  }
+  if (any && !document.hidden && t - vLast > 32) { vLast = t; dirty(); }
   requestAnimationFrame(videoTick);
 }
 requestAnimationFrame(videoTick);
@@ -887,7 +937,9 @@ cv.addEventListener('pointerdown', e => {
   const p = toWorld(sp), sel = selEl();
   if (sel && !sel.locked && !ui.adjust) { const hd = handleAt(sel, p); if (hd) { startHandle(sel, hd, p, sp); return; } }
   if (ui.adjust && sel && sel.img && hitEl(sel, p)) { drag = { mode: 'panimg', id: sel.id, p0: p, sp0: sp, o0: { x: sel.img.ox, y: sel.img.oy }, moved: false }; return; }
-  const h = elAt(p), now = performance.now();
+  const hv = elAt(p);
+  if (hv && isVidEl(hv) && !ui.adjust && inBadge(hv, p)) { if (ui.sel !== hv.id) select(hv.id); togglePlay(hv); drag = null; return; }
+  const h = hv, now = performance.now();
   const dbl = h && lastTap.id === h.id && now - lastTap.t < 340 && dist(sp, lastTap.p) < 30;
   lastTap = { id: h ? h.id : null, t: now, p: sp };
   if (h) {
@@ -1122,6 +1174,7 @@ const ACT = {
   front() { const s = selEl(); if (!s) return; S.els = S.els.filter(e => e !== s); S.els.push(s); commit(); dirty(); },
   back() { const s = selEl(); if (!s) return; S.els = S.els.filter(e => e !== s); S.els.unshift(s); commit(); dirty(); },
   keepRatio() { const s = selEl(); if (!s) return; s.keepRatio = !ratioLocked(s); commit(); renderPanel(); dirty(); },
+  vPlay() { const s = selEl(); if (s && isVidEl(s)) togglePlay(s); },
   vSound() { const s = selEl(); if (!s) return; s.mute = !s.mute; commit(); renderPanel(); },
   lock() { const s = selEl(); if (!s) return; s.locked = !s.locked; commit(); renderPanel(); dirty(); },
   replace() { const s = selEl(); if (!s) return; ui.replaceTarget = s.id; $('#fileOne').click(); },
@@ -1218,7 +1271,7 @@ function openTool(tool) {
 /* ---------- painel ---------- */
 const getP = (o, p) => p.split('.').reduce((a, k) => (a == null ? a : a[k]), o);
 const setP = (o, p, v) => { const ks = p.split('.'); let a = o; for (let i = 0; i < ks.length - 1; i++) a = a[ks[i]]; a[ks[ks.length - 1]] = v; };
-const FMT = { rot: v => Math.round(v) + '°', opacity: v => Math.round(v * 100) + '%', 'img.s': v => v.toFixed(2) + '×', lh: v => (+v).toFixed(2), angle: v => Math.round(v) + '°', 'adj.t': v => (v > 0 ? '+' : '') + Math.round(v), q: v => Math.round(v * 100) + '%' };
+const FMT = { 'trim.a': v => fmtT(v), 'trim.b': v => fmtT(v), rot: v => Math.round(v) + '°', opacity: v => Math.round(v * 100) + '%', 'img.s': v => v.toFixed(2) + '×', lh: v => (+v).toFixed(2), angle: v => Math.round(v) + '°', 'adj.t': v => (v > 0 ? '+' : '') + Math.round(v), q: v => Math.round(v * 100) + '%' };
 const fmt = (p, v) => (FMT[p] ? FMT[p](+v) : String(Math.round(+v)));
 function R(label, prop, min, max, step, scope = 'el') { return `<div class="row"><label>${label}</label><input type="range" min="${min}" max="${max}" step="${step}" data-prop="${prop}" data-scope="${scope}"><span class="val" data-val="${prop}"></span></div>`; }
 function C(label, prop, scope = 'el') { return `<div class="row"><label>${label}</label><button type="button" class="cbtn" data-color="${prop}" data-scope="${scope}" data-label="${label}"><i></i><span></span></button></div>`; }
@@ -1254,7 +1307,16 @@ function panelImage(el) {
   let h = head(el.tag === 'bgimg' ? 'Imagem de fundo' : el.img ? (rec && rec.video ? 'Vídeo' : el.cut ? 'Recorte' : 'Foto') : 'Moldura vazia');
   h += `<div class="acts" style="margin-bottom:6px">${A('replace', 'swap', el.img ? 'Trocar' : 'Escolher')}${el.img ? A('adjust', 'move', 'Enquadrar', ui.adjust) : ''}${el.img ? A('flip', 'flip', 'Espelhar', el.flip) : ''}${A('del', 'trash', 'Excluir', false, 'danger')}</div>`;
   h += commonActs(el);
-  if (rec && rec.video) h += `<label class="chk" style="margin-top:8px"><input type="checkbox" data-act="vSound" ${el.mute ? '' : 'checked'}> Som do vídeo na exportação</label><p class="note" style="margin:2px 0 0">${Math.round(rec.dur)} s · no editor o vídeo toca sem som. Os slides em que ele aparece são exportados como vídeo.</p>`;
+  if (rec && rec.video) {
+    el.trim = trimOf(el, rec); const st = Math.min(0.1, rec.dur / 100);
+    h += `<div class="sec">Trecho do vídeo</div>
+    <div class="row"><label>Início</label><input type="range" min="0" max="${rec.dur}" step="${st}" data-prop="trim.a" data-scope="el"><span class="val" data-val="trim.a"></span></div>
+    <div class="row"><label>Fim</label><input type="range" min="0" max="${rec.dur}" step="${st}" data-prop="trim.b" data-scope="el"><span class="val" data-val="trim.b"></span></div>
+    <p class="note" id="trimInfo" style="margin:2px 0 8px">${trimNote(el, rec)}</p>
+    <button class="btn wide ${isPlaying(el) ? '' : 'primary'}" data-act="vPlay">${isPlaying(el) ? '❚❚ Pausar' : '▶ Tocar trecho'}</button>
+    <label class="chk" style="margin-top:8px"><input type="checkbox" data-act="vSound" ${el.mute ? '' : 'checked'}> Som do vídeo na exportação</label>
+    <p class="note" style="margin:2px 0 0">No editor o vídeo fica parado e toca sem som quando você aperta ▶. Os slides em que ele aparece são exportados como vídeo, só com o trecho escolhido.</p>`;
+  }
   h += `<label class="chk" style="margin-top:8px"><input type="checkbox" data-act="keepRatio" ${ratioLocked(el) ? 'checked' : ''}> Manter proporção ao redimensionar</label>`;
   if (el.img && (el.cut || (rec && rec.alpha))) h += `<label class="chk" style="margin-top:8px"><input type="checkbox" data-act="cut" ${el.cut ? 'checked' : ''}> Recorte: contorno e sombra seguem a figura</label>`;
   if (el.img) {
@@ -1265,6 +1327,18 @@ function panelImage(el) {
   if (el.cut && el.img) h += `<div class="sec">Adesivo</div>${R('Contorno', 'stroke', 0, 60, 1)}${C('Cor contorno', 'strokeColor')}${R('Sombra', 'shadow', 0, 100, 1)}${R('Opacidade', 'opacity', 0, 1, 0.01)}${R('Rotação', 'rot', -180, 180, 1)}`;
   else h += `<div class="sec">Moldura</div>${R('Cantos', 'radius', 0, 540, 1)}${R('Borda', 'stroke', 0, 80, 1)}${C('Cor da borda', 'strokeColor')}${R('Sombra', 'shadow', 0, 100, 1)}${R('Opacidade', 'opacity', 0, 1, 0.01)}${R('Rotação', 'rot', -180, 180, 1)}`;
   return h + posActs();
+}
+const fmtT = v => { v = Math.max(0, +v || 0); const m = Math.floor(v / 60), s = v - m * 60; return `${m}:${s < 10 ? '0' : ''}${s.toFixed(1)}`; };
+function trimNote(el, rec) { const { a, b } = trimOf(el, rec); return `Trecho de ${(b - a).toFixed(1)} s (vídeo inteiro: ${fmtT(rec.dur)}; máx. ${MAX_VIDEO_S} s por slide).`; }
+// mantém início < fim e o trecho com no máximo 60 s; mostra o quadro do ponto que está sendo ajustado
+function fixTrim(el, which) {
+  const rec = IMGS.get(el.img.id), d = rec.dur, t = el.trim, gap = 0.5;
+  if (which === 'a') { t.a = clamp(t.a, 0, d - gap); if (t.b < t.a + gap) t.b = Math.min(d, t.a + gap); if (t.b - t.a > MAX_VIDEO_S) t.b = t.a + MAX_VIDEO_S; }
+  else { t.b = clamp(t.b, gap, d); if (t.a > t.b - gap) t.a = Math.max(0, t.b - gap); if (t.b - t.a > MAX_VIDEO_S) t.a = t.b - MAX_VIDEO_S; }
+  const v = playerFor(el, rec); v.pause(); v.currentTime = which === 'a' ? t.a : Math.max(t.a, t.b - 0.05);
+  const info = $('#trimInfo'); if (info) info.textContent = trimNote(el, rec);
+  const pb = $('#panel [data-act="vPlay"]'); if (pb) { pb.textContent = '▶ Tocar trecho'; pb.classList.add('primary'); }
+  syncPanel();
 }
 function panelText(el) {
   const fonts = [...FONTS, ...S.customFonts.map(f => f.family)];
@@ -1367,7 +1441,7 @@ function onPanelInput(e, isChange) {
   let v = inp.value; if (inp.type === 'range' || inp.dataset.num) v = parseFloat(v);
   setP(o, inp.dataset.prop, v);
   const el = inp.dataset.scope === 'el' ? o : null;
-  if (el) { if (el.type === 'text') layoutText(el); clampImg(el); }
+  if (el) { if (el.type === 'text') layoutText(el); clampImg(el); if (inp.dataset.prop.startsWith('trim.') && el.img) fixTrim(el, inp.dataset.prop.slice(5)); }
   const sp = $(`#panel [data-val="${inp.dataset.prop}"]`); if (sp) sp.textContent = fmt(inp.dataset.prop, v);
   dirty();
   if (inp.dataset.scope === 'tpl' && !isChange) drawTplThumbs();
@@ -1579,9 +1653,9 @@ async function waitFonts() {
   await Promise.all(S.els.filter(e => e.type === 'text').map(e => document.fonts.load(`${e.italic ? 'italic ' : ''}${e.weight} 40px ${fam(e.font)}`).catch(() => { })));
   TL = new WeakMap();
 }
-function drawRegion(x, x0, wWorld, outW, cache) {
+function drawRegion(x, x0, wWorld, outW, cache, vmap) {
   const s = outW / wWorld; x.setTransform(s, 0, 0, s, -x0 * s, 0); x.imageSmoothingQuality = 'high';
-  drawBg(x); for (const e of S.els) drawEl(x, e, { editor: false, px: s, out: s, cache });
+  drawBg(x); for (const e of S.els) drawEl(x, e, { editor: false, px: s, out: s, cache, vmap });
 }
 function renderRegion(x0, wWorld, outW) {
   const s = outW / wWorld, c = document.createElement('canvas'); c.width = Math.round(outW); c.height = Math.round(H() * s);
@@ -1598,35 +1672,45 @@ function pickVideoMime() {
     if (MediaRecorder.isTypeSupported(m)) return m;
   return null;
 }
-// Grava o slide em tempo real: toca cópias dos vídeos, desenha o slide a cada quadro e captura o canvas (+ áudio).
+// Cópias independentes dos vídeos (uma por moldura), posicionadas no início do trecho de cada uma.
+async function videoSession(els) {
+  const items = els.map(e => { const rec = IMGS.get(e.img.id); return { e, rec, tr: trimOf(e, rec), v: makeVideo(rec.url) }; });
+  const S2 = {
+    items, vmap: new Map(items.map(s => [s.e.id, s.v])),
+    dur: items.length ? Math.min(MAX_VIDEO_S, Math.max(...items.map(s => s.tr.b - s.tr.a))) : 0,
+    wrap() { for (const s of items) if (s.v.currentTime >= s.tr.b - 0.03 || s.v.currentTime < s.tr.a - 0.3) s.v.currentTime = s.tr.a; },
+    stop() { for (const s of items) { s.v.pause(); s.v.removeAttribute('src'); s.v.load(); } }
+  };
+  try {
+    await Promise.all(items.map(s => readyVideo(s.v)));
+    await Promise.all(items.map(s => { s.v.pause(); const sk = once(s.v, 'seeked', 3000); s.v.currentTime = s.tr.a; return sk; }));
+  } catch (err) { S2.stop(); throw err; }
+  return S2;
+}
+// Grava o slide em tempo real: toca os trechos, desenha o slide a cada quadro e captura o canvas (+ áudio).
 async function recordSlide(i, outW, mime, ac, onProg) {
-  const els = slideVideoEls(i), recs = [...new Set(els.map(e => e.img.id))].map(id => IMGS.get(id));
-  const audible = new Set(els.filter(e => !e.mute).map(e => e.img.id));
-  const dur = Math.min(MAX_VIDEO_S, Math.max(...recs.map(r => r.dur)));
-  const swaps = recs.map(r => ({ r, orig: r.img, v: makeVideo(r.url) }));
+  const ses = await videoSession(slideVideoEls(i)), dur = ses.dur;
   const c = document.createElement('canvas'); c.width = Math.round(outW); c.height = Math.round(H() * outW / W);
   const x = c.getContext('2d'), cache = new Map();
   try {
-    await Promise.all(swaps.map(s => readyVideo(s.v)));
-    for (const s of swaps) { s.v.pause(); s.v.currentTime = 0; s.r.img = s.v; }
-    await Promise.all(swaps.map(s => s.v.readyState >= 2 && !s.v.seeking ? null : once(s.v, 'seeked', 3000)));
-    const draw = () => drawRegion(x, i * W, W, outW, cache);
+    const draw = () => drawRegion(x, i * W, W, outW, cache, ses.vmap);
     draw();
     const stream = c.captureStream(30);
     let mutedAll = false;
-    if (ac && audible.size) {
+    const audible = ses.items.filter(s => !s.e.mute);
+    if (ac && audible.length) {
       const dest = ac.createMediaStreamDestination();
-      for (const s of swaps) if (audible.has(s.r.id)) { s.v.muted = false; ac.createMediaElementSource(s.v).connect(dest); }
+      for (const s of audible) { s.v.muted = false; ac.createMediaElementSource(s.v).connect(dest); }
       const tr = dest.stream.getAudioTracks()[0]; if (tr) stream.addTrack(tr);
     }
     const mr = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 8e6 });
     const chunks = []; mr.ondataavailable = ev => { if (ev.data && ev.data.size) chunks.push(ev.data); };
-    for (const s of swaps) { try { await s.v.play(); } catch (_) { s.v.muted = true; mutedAll = true; await s.v.play().catch(() => { }); } }
+    for (const s of ses.items) { try { await s.v.play(); } catch (_) { s.v.muted = true; mutedAll = true; await s.v.play().catch(() => { }); } }
     mr.start(250);
     const t0 = performance.now();
     await new Promise(res => {
       const step = () => {
-        draw(); const t = (performance.now() - t0) / 1000;
+        ses.wrap(); draw(); const t = (performance.now() - t0) / 1000;
         if (onProg) onProg(Math.min(1, t / dur));
         if (t >= dur) res(); else setTimeout(step, 1000 / 30);
       };
@@ -1636,9 +1720,7 @@ async function recordSlide(i, outW, mime, ac, onProg) {
     stream.getTracks().forEach(t => t.stop());
     if (mutedAll) toast('O navegador bloqueou o som de um vídeo; ele saiu sem áudio.');
     return new Blob(chunks, { type: mime.split(';')[0] });
-  } finally {
-    for (const s of swaps) { s.r.img = s.orig; s.v.pause(); s.v.removeAttribute('src'); s.v.load(); }
-  }
+  } finally { ses.stop(); }
 }
 const renderSlide = (i, outW) => renderRegion(i * W, W, outW);
 const toBlob = (c, type, q) => new Promise(r => c.toBlob(r, type, q));
@@ -1677,7 +1759,14 @@ async function openPreview() {
   <p class="note" style="margin-top:10px">Deslize para conferir as emendas. A faixa embaixo mostra o carrossel inteiro.</p>`);
   if (live.length) {
     const cs = [...document.querySelectorAll('#mbox canvas[data-live]')], cache = new Map(); let last = 0;
-    const loop = t => { if (!cs[0].isConnected) return; if (t - last > 32) { last = t; cs.forEach(c => drawRegion(c.getContext('2d'), +c.dataset.live * W, W, PW, cache)); } requestAnimationFrame(loop); };
+    const els = [...new Set(live.flatMap(slideVideoEls))];
+    let ses = null; try { ses = await videoSession(els); } catch (_) { }
+    if (ses) ses.items.forEach(s => s.v.play().catch(() => { }));
+    const loop = t => {
+      if (!cs[0].isConnected) { if (ses) ses.stop(); return; }
+      if (t - last > 32) { last = t; if (ses) ses.wrap(); cs.forEach(c => drawRegion(c.getContext('2d'), +c.dataset.live * W, W, PW, cache, ses && ses.vmap)); }
+      requestAnimationFrame(loop);
+    };
     requestAnimationFrame(loop);
   }
   const pv = $('#pv'); pv.addEventListener('scroll', () => { const i = Math.round(pv.scrollLeft / pv.clientWidth); $('#pvc').textContent = `${i + 1}/${S.slides}`; document.querySelectorAll('#dots i').forEach((d, k) => d.classList.toggle('on', k === i)); });
@@ -1769,7 +1858,7 @@ async function init() {
   setSaved(S.els.length ? 'Salvo neste navegador' : '');
   new ResizeObserver(() => { const had = CW; resize(); if (!had) fitInitial(); }).observe($('#stage'));
   matchMedia('(max-width: 820px)').addEventListener('change', () => { updHeader(); renderPanel(); });
-  document.addEventListener('visibilitychange', () => { if (document.hidden) { clearTimeout(saveT); saveNow(); } videoTick.on = syncVideos(); });
+  document.addEventListener('visibilitychange', () => { if (document.hidden) { clearTimeout(saveT); saveNow(); } if (document.hidden) pauseAll(); });
 }
 init();
 if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
