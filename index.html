@@ -303,6 +303,8 @@ function setFrameImage(e, id) {
   e.img = { id, s: 1, ox: 0, oy: 0 }; const r = IMGS.get(id); e.cut = !!(r && r.alpha); FCACHE.delete(e.id);
   if (r && r.video) e.trim = { a: 0, b: Math.min(r.dur, MAX_VIDEO_S) }; else delete e.trim;
 }
+// modo "só um quadro": a moldura mostra um quadro fixo do vídeo e o slide sai como imagem
+const stillT = (e, rec) => clamp(e.frameT == null ? trimOf(e, rec).a : +e.frameT, 0, Math.max(0, rec.dur - 0.05));
 // trecho do vídeo usado por esta moldura (início a, fim b, em segundos)
 function trimOf(e, rec) {
   const d = rec.dur, t = e.trim || {};
@@ -597,7 +599,7 @@ function applyTemplate(id) {
     const e = newFrame(f.x, f.y, f.w, f.h); e.radius = r;
     if (f.st) Object.assign(e, f.st);
     const src = used[i];
-    if (src) { setFrameImage(e, src.img.id); e.adj = { ...src.adj }; e.flip = src.flip; if (e.cut) e.cut = !!src.cut; if (src.trim) e.trim = { ...src.trim }; e.mute = src.mute; }
+    if (src) { setFrameImage(e, src.img.id); e.adj = { ...src.adj }; e.flip = src.flip; if (e.cut) e.cut = !!src.cut; if (src.trim) e.trim = { ...src.trim }; e.mute = src.mute; if (src.still) { e.still = true; e.frameT = src.frameT; } }
     return e;
   });
   const bgs = S.els.filter(e => e.tag === 'bgimg');
@@ -661,7 +663,7 @@ function drawEl(c, e, o) {
       c.imageSmoothingQuality = 'high'; c.drawImage(src, -dw / 2, -dh / 2, dw, dh);
     } else drawPlaceholder(c, w, h);
     c.restore();
-    if (o.editor && rec && rec.video) drawVideoBadge(c, e);
+    if (o.editor && rec && rec.video && !e.still) drawVideoBadge(c, e);
     if (e.stroke > 0) { c.lineWidth = e.stroke; c.strokeStyle = e.strokeColor; rr(c, -w / 2 + e.stroke / 2, -h / 2 + e.stroke / 2, w - e.stroke, h - e.stroke, Math.max(0, e.radius - e.stroke / 2)); c.stroke(); }
   } else if (e.type === 'text') drawText(c, e, o);
   else if (e.type === 'shape') drawShape(c, e, o);
@@ -782,7 +784,7 @@ function playerFor(e, rec) {
   const p = PLAYERS.get(e.id); if (p && p.recId === rec.id) return p.v;
   if (p) dropPlayer(e.id);
   const v = makeVideo(rec.url), id = e.id;
-  const toStart = () => { const el = byId(id); if (el && v.paused) v.currentTime = trimOf(el, rec).a; };
+  const toStart = () => { const el = byId(id); if (el && v.paused) v.currentTime = el.still ? stillT(el, rec) : trimOf(el, rec).a; };
   v.addEventListener('loadeddata', toStart, { once: true }); v.addEventListener('seeked', dirty);
   v.play().then(() => { v.pause(); toStart(); }).catch(() => { }); // força o carregamento do 1º quadro (iPhone)
   PLAYERS.set(id, { v, recId: rec.id }); return v;
@@ -790,9 +792,20 @@ function playerFor(e, rec) {
 function dropPlayer(id) { const p = PLAYERS.get(id); if (!p) return; p.v.pause(); p.v.removeAttribute('src'); p.v.load(); PLAYERS.delete(id); for (const k of VCACHE.keys()) if (k.startsWith(id + '|')) VCACHE.delete(k); }
 const isPlaying = e => { const p = PLAYERS.get(e.id); return !!(p && !p.v.paused); };
 function togglePlay(e) {
+  if (e.still) return;
   const rec = IMGS.get(e.img.id), v = playerFor(e, rec), { a, b } = trimOf(e, rec);
   if (v.paused) { if (v.currentTime < a - 0.05 || v.currentTime >= b - 0.05) v.currentTime = a; v.play().catch(() => { }); } else v.pause();
   setTimeout(() => { dirty(); if (ui.sel === e.id) renderPanel(); }, 30);
+}
+function seekStill(e) { const rec = IMGS.get(e.img.id), v = playerFor(e, rec); v.pause(); v.currentTime = stillT(e, rec); }
+// garante que cada moldura em modo quadro está parada no quadro certo antes de exportar/pré-visualizar
+async function settleStills() {
+  for (const e of S.els.filter(x => isVidEl(x) && x.still)) {
+    const rec = IMGS.get(e.img.id), v = playerFor(e, rec), t = stillT(e, rec);
+    if (v.readyState < 2) await once(v, 'loadeddata', 6000);
+    v.pause();
+    if (Math.abs(v.currentTime - t) > 0.02 || v.seeking) { const sk = once(v, 'seeked', 3000); v.currentTime = t; await sk; }
+  }
 }
 function pauseAll() { for (const p of PLAYERS.values()) if (!p.v.paused) p.v.pause(); dirty(); }
 let vLast = 0, vSync = 0;
@@ -938,7 +951,7 @@ cv.addEventListener('pointerdown', e => {
   if (sel && !sel.locked && !ui.adjust) { const hd = handleAt(sel, p); if (hd) { startHandle(sel, hd, p, sp); return; } }
   if (ui.adjust && sel && sel.img && hitEl(sel, p)) { drag = { mode: 'panimg', id: sel.id, p0: p, sp0: sp, o0: { x: sel.img.ox, y: sel.img.oy }, moved: false }; return; }
   const hv = elAt(p);
-  if (hv && isVidEl(hv) && !ui.adjust && inBadge(hv, p)) { if (ui.sel !== hv.id) select(hv.id); togglePlay(hv); drag = null; return; }
+  if (hv && isVidEl(hv) && !hv.still && !ui.adjust && inBadge(hv, p)) { if (ui.sel !== hv.id) select(hv.id); togglePlay(hv); drag = null; return; }
   const h = hv, now = performance.now();
   const dbl = h && lastTap.id === h.id && now - lastTap.t < 340 && dist(sp, lastTap.p) < 30;
   lastTap = { id: h ? h.id : null, t: now, p: sp };
@@ -1174,6 +1187,16 @@ const ACT = {
   front() { const s = selEl(); if (!s) return; S.els = S.els.filter(e => e !== s); S.els.push(s); commit(); dirty(); },
   back() { const s = selEl(); if (!s) return; S.els = S.els.filter(e => e !== s); S.els.unshift(s); commit(); dirty(); },
   keepRatio() { const s = selEl(); if (!s) return; s.keepRatio = !ratioLocked(s); commit(); renderPanel(); dirty(); },
+  vMode(m) {
+    const s = selEl(); if (!s || !isVidEl(s)) return; const rec = IMGS.get(s.img.id), pl = PLAYERS.get(s.id);
+    if (m === 'still') { s.still = true; if (pl) { pl.v.pause(); s.frameT = clamp(pl.v.currentTime, 0, Math.max(0, rec.dur - 0.05)); } seekStill(s); }
+    else { s.still = false; const v = playerFor(s, rec); v.pause(); v.currentTime = trimOf(s, rec).a; }
+    commit(); renderPanel(); dirty();
+  },
+  vStep(d) {
+    const s = selEl(); if (!s || !s.still) return; const rec = IMGS.get(s.img.id);
+    s.frameT = clamp(stillT(s, rec) + (+d) / 30, 0, Math.max(0, rec.dur - 0.05)); seekStill(s); syncPanel(true); clearTimeout(nudgeT); nudgeT = setTimeout(commit, 400);
+  },
   vPlay() { const s = selEl(); if (s && isVidEl(s)) togglePlay(s); },
   vSound() { const s = selEl(); if (!s) return; s.mute = !s.mute; commit(); renderPanel(); },
   lock() { const s = selEl(); if (!s) return; s.locked = !s.locked; commit(); renderPanel(); dirty(); },
@@ -1271,7 +1294,7 @@ function openTool(tool) {
 /* ---------- painel ---------- */
 const getP = (o, p) => p.split('.').reduce((a, k) => (a == null ? a : a[k]), o);
 const setP = (o, p, v) => { const ks = p.split('.'); let a = o; for (let i = 0; i < ks.length - 1; i++) a = a[ks[i]]; a[ks[ks.length - 1]] = v; };
-const FMT = { 'trim.a': v => fmtT(v), 'trim.b': v => fmtT(v), rot: v => Math.round(v) + '°', opacity: v => Math.round(v * 100) + '%', 'img.s': v => v.toFixed(2) + '×', lh: v => (+v).toFixed(2), angle: v => Math.round(v) + '°', 'adj.t': v => (v > 0 ? '+' : '') + Math.round(v), q: v => Math.round(v * 100) + '%' };
+const FMT = { 'trim.a': v => fmtT(v), 'trim.b': v => fmtT(v), frameT: v => fmtT(v, 2), rot: v => Math.round(v) + '°', opacity: v => Math.round(v * 100) + '%', 'img.s': v => v.toFixed(2) + '×', lh: v => (+v).toFixed(2), angle: v => Math.round(v) + '°', 'adj.t': v => (v > 0 ? '+' : '') + Math.round(v), q: v => Math.round(v * 100) + '%' };
 const fmt = (p, v) => (FMT[p] ? FMT[p](+v) : String(Math.round(+v)));
 function R(label, prop, min, max, step, scope = 'el') { return `<div class="row"><label>${label}</label><input type="range" min="${min}" max="${max}" step="${step}" data-prop="${prop}" data-scope="${scope}"><span class="val" data-val="${prop}"></span></div>`; }
 function C(label, prop, scope = 'el') { return `<div class="row"><label>${label}</label><button type="button" class="cbtn" data-color="${prop}" data-scope="${scope}" data-label="${label}"><i></i><span></span></button></div>`; }
@@ -1304,11 +1327,21 @@ function posActs() {
 }
 function panelImage(el) {
   const rec = el.img && IMGS.get(el.img.id);
-  let h = head(el.tag === 'bgimg' ? 'Imagem de fundo' : el.img ? (rec && rec.video ? 'Vídeo' : el.cut ? 'Recorte' : 'Foto') : 'Moldura vazia');
+  let h = head(el.tag === 'bgimg' ? 'Imagem de fundo' : el.img ? (rec && rec.video ? (el.still ? 'Quadro do vídeo' : 'Vídeo') : el.cut ? 'Recorte' : 'Foto') : 'Moldura vazia');
   h += `<div class="acts" style="margin-bottom:6px">${A('replace', 'swap', el.img ? 'Trocar' : 'Escolher')}${el.img ? A('adjust', 'move', 'Enquadrar', ui.adjust) : ''}${el.img ? A('flip', 'flip', 'Espelhar', el.flip) : ''}${A('del', 'trash', 'Excluir', false, 'danger')}</div>`;
   h += commonActs(el);
+  const st = rec && rec.video ? Math.min(0.1, rec.dur / 100) : 0.1;
   if (rec && rec.video) {
-    el.trim = trimOf(el, rec); const st = Math.min(0.1, rec.dur / 100);
+    el.trim = trimOf(el, rec);
+    h += `<div class="row" style="margin-top:8px"><label>Usar</label><div class="seg"><button class="${el.still ? '' : 'on'}" data-act="vMode" data-arg="video">Vídeo</button><button class="${el.still ? 'on' : ''}" data-act="vMode" data-arg="still">Só um quadro</button></div></div>`;
+  }
+  if (rec && rec.video && el.still) {
+    el.frameT = stillT(el, rec);
+    h += `<div class="sec">Quadro escolhido</div>
+    <div class="row"><label>Momento</label><input type="range" min="0" max="${Math.max(0, rec.dur - 0.05)}" step="0.01" data-prop="frameT" data-scope="el"><span class="val" data-val="frameT"></span></div>
+    <div class="bgrid"><button class="btn" data-act="vStep" data-arg="-1">◀ Quadro anterior</button><button class="btn" data-act="vStep" data-arg="1">Próximo quadro ▶</button></div>
+    <p class="note" style="margin:6px 0 0">A moldura mostra só este quadro, como uma foto, e o slide é exportado como imagem. Toque em “Vídeo” para voltar a usar o vídeo.</p>`;
+  } else if (rec && rec.video) {
     h += `<div class="sec">Trecho do vídeo</div>
     <div class="row"><label>Início</label><input type="range" min="0" max="${rec.dur}" step="${st}" data-prop="trim.a" data-scope="el"><span class="val" data-val="trim.a"></span></div>
     <div class="row"><label>Fim</label><input type="range" min="0" max="${rec.dur}" step="${st}" data-prop="trim.b" data-scope="el"><span class="val" data-val="trim.b"></span></div>
@@ -1328,7 +1361,7 @@ function panelImage(el) {
   else h += `<div class="sec">Moldura</div>${R('Cantos', 'radius', 0, 540, 1)}${R('Borda', 'stroke', 0, 80, 1)}${C('Cor da borda', 'strokeColor')}${R('Sombra', 'shadow', 0, 100, 1)}${R('Opacidade', 'opacity', 0, 1, 0.01)}${R('Rotação', 'rot', -180, 180, 1)}`;
   return h + posActs();
 }
-const fmtT = v => { v = Math.max(0, +v || 0); const m = Math.floor(v / 60), s = v - m * 60; return `${m}:${s < 10 ? '0' : ''}${s.toFixed(1)}`; };
+const fmtT = (v, d = 1) => { v = Math.max(0, +v || 0); const m = Math.floor(v / 60), s = v - m * 60; return `${m}:${s < 10 ? '0' : ''}${s.toFixed(d)}`; };
 function trimNote(el, rec) { const { a, b } = trimOf(el, rec); return `Trecho de ${(b - a).toFixed(1)} s (vídeo inteiro: ${fmtT(rec.dur)}; máx. ${MAX_VIDEO_S} s por slide).`; }
 // mantém início < fim e o trecho com no máximo 60 s; mostra o quadro do ponto que está sendo ajustado
 function fixTrim(el, which) {
@@ -1441,7 +1474,7 @@ function onPanelInput(e, isChange) {
   let v = inp.value; if (inp.type === 'range' || inp.dataset.num) v = parseFloat(v);
   setP(o, inp.dataset.prop, v);
   const el = inp.dataset.scope === 'el' ? o : null;
-  if (el) { if (el.type === 'text') layoutText(el); clampImg(el); if (inp.dataset.prop.startsWith('trim.') && el.img) fixTrim(el, inp.dataset.prop.slice(5)); }
+  if (el) { if (el.type === 'text') layoutText(el); clampImg(el); if (inp.dataset.prop.startsWith('trim.') && el.img) fixTrim(el, inp.dataset.prop.slice(5)); if (inp.dataset.prop === 'frameT' && el.img) seekStill(el); }
   const sp = $(`#panel [data-val="${inp.dataset.prop}"]`); if (sp) sp.textContent = fmt(inp.dataset.prop, v);
   dirty();
   if (inp.dataset.scope === 'tpl' && !isChange) drawTplThumbs();
@@ -1663,7 +1696,7 @@ function renderRegion(x0, wWorld, outW) {
 }
 /* ---------- slides com vídeo ---------- */
 function slideVideoEls(i) {
-  return S.els.filter(e => { if (!isVidEl(e) || !(e.opacity > 0)) return false; const b = aabb(e); return b.x1 > i * W && b.x0 < (i + 1) * W && b.y1 > 0 && b.y0 < H(); });
+  return S.els.filter(e => { if (!isVidEl(e) || e.still || !(e.opacity > 0)) return false; const b = aabb(e); return b.x1 > i * W && b.x0 < (i + 1) * W && b.y1 > 0 && b.y0 < H(); });
 }
 const slideHasVideo = i => slideVideoEls(i).length > 0;
 function pickVideoMime() {
@@ -1749,7 +1782,7 @@ function openModal(html) { $('#mbox').innerHTML = html; $('#modal').classList.ad
 function closeModal() { $('#modal').classList.remove('show'); $('#mbox').innerHTML = ''; }
 $('#modal').addEventListener('click', e => { if (e.target.id === 'modal') closeModal(); });
 async function openPreview() {
-  select(null); await waitFonts();
+  select(null); await waitFonts(); await settleStills();
   const PW = 720, ph = Math.round(H() * PW / W), live = range(S.slides).filter(slideHasVideo);
   const urls = []; for (let i = 0; i < S.slides; i++) urls.push(live.includes(i) ? null : URL.createObjectURL(await toBlob(renderSlide(i, PW), 'image/jpeg', 0.88)));
   const cell = (u, i) => u ? `<img src="${u}" alt="">` : `<canvas width="${PW}" height="${ph}" data-live="${i}"></canvas>`;
@@ -1796,7 +1829,7 @@ async function doExport(mode) {
   if (ac && ac.state === 'suspended') ac.resume().catch(() => { });
   document.querySelectorAll('#mbox .btn').forEach(b => b.disabled = true);
   try {
-    await waitFonts(); const files = [];
+    await waitFonts(); await settleStills(); const files = [];
     for (const i of (mode === 'strip' ? [] : idx)) {
       const nm = `carrossel_${String(i + 1).padStart(2, '0')}`;
       if (vidIdx.includes(i)) {
