@@ -12,3 +12,7 @@ Editor pessoal de carrosséis contínuos para Instagram. Roda no navegador; as f
 - Na exportação, todo slide que tem vídeo vira um arquivo de vídeo (MP4 quando o navegador permite, senão WebM), com a duração do trecho mais longo do slide. Os outros slides continuam saindo como imagem.
 - A gravação acontece em tempo real: um vídeo de 15 s leva cerca de 15 s para exportar. Mantenha a aba aberta.
 - O som do vídeo entra no arquivo exportado. Dá para desligar em **Som do vídeo na exportação**, no painel do vídeo.
+
+## Publicação
+
+O app é publicado pelo GitHub Pages a cada atualização do `main`. Se uma publicação travar ou falhar na aba **Actions**, basta executá-la de novo ou fazer uma nova atualização no `main`.
