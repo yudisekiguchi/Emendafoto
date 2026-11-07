@@ -115,7 +115,7 @@ button.cbtn:hover{background:var(--card2)}
 .clab{font-size:10.5px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin-top:12px}
 .cdots{display:flex;flex-wrap:wrap;gap:7px;margin-top:6px}
 .cdots button{width:28px;height:28px;border-radius:50%;border:1px solid rgba(255,255,255,.22);padding:0}
-@media (max-width:820px){#cpop{left:8px!important;right:8px;top:auto!important;bottom:calc(66px + env(safe-area-inset-bottom));width:auto}}
+body.lay-bottom #cpop{left:8px!important;right:8px;top:auto!important;bottom:calc(66px + env(safe-area-inset-bottom));width:auto;max-width:420px}
 .lib{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-top:8px}
 .lib button{aspect-ratio:1;border:1px solid var(--line);background:#ece9e3;border-radius:10px;padding:5px;position:relative;overflow:hidden}
 .lib img{width:100%;height:100%;object-fit:contain;display:block;pointer-events:none}
@@ -155,18 +155,23 @@ input.search{width:100%;height:36px;border-radius:10px;border:1px solid var(--li
   .btn.icon{width:34px}
   .stepper span{min-width:30px}
   .stepper span small{display:none}
-  main{flex-direction:column}
-  #stage{order:1;flex:1}
-  #panel{order:2;width:auto;max-height:46vh;border-left:0;border-top:1px solid var(--line);padding:12px 14px 16px}
-  #panel.hidden{display:none}
-  #tools{order:3;width:auto;flex-direction:row;justify-content:space-around;padding:4px;padding-bottom:max(4px,env(safe-area-inset-bottom));border-right:0;border-top:1px solid var(--line);overflow-x:auto;overflow-y:hidden}
-  .tool{padding:6px 4px;min-width:50px}
-  .ph .x{display:inline-flex}
   input,select,textarea{font-size:16px}
   #zoom{display:none}
-  #pager{bottom:8px}
-  .tpls{grid-template-columns:1fr 1fr 1fr}
 }
+/* posição das ferramentas (Projeto → Posição das ferramentas) */
+body.lay-right main{flex-direction:row-reverse}
+body.lay-right #tools{border-right:0;border-left:1px solid var(--line)}
+body.lay-right #panel{border-left:0;border-right:1px solid var(--line)}
+body.lay-bottom main{flex-direction:column}
+body.lay-bottom #stage{order:1;flex:1}
+body.lay-bottom #panel{order:2;width:auto;max-height:46vh;border-left:0;border-top:1px solid var(--line);padding:12px 14px 16px}
+body.lay-bottom #panel.hidden{display:none}
+body.lay-bottom #tools{order:3;width:auto;flex-direction:row;justify-content:center;gap:4px;padding:4px;padding-bottom:max(4px,env(safe-area-inset-bottom));border-right:0;border-top:1px solid var(--line);overflow-x:auto;overflow-y:hidden}
+body.lay-bottom .tool{padding:6px 4px;min-width:50px;flex:0 1 84px}
+body.lay-bottom .ph .x{display:inline-flex}
+body.lay-bottom #pager{bottom:8px}
+body.lay-bottom .tpls{grid-template-columns:repeat(auto-fill,minmax(150px,1fr))}
+@media (min-width:821px){body.lay-bottom #panel{max-height:40vh}body.lay-bottom .bgrid,body.lay-bottom .acts{max-width:640px}}
 </style>
 </head>
 <body>
@@ -216,7 +221,15 @@ const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const rad = d => d * Math.PI / 180;
 const uid = () => Math.random().toString(36).slice(2, 10);
 const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
-const isMobile = () => matchMedia('(max-width: 820px)').matches;
+const isSmall = () => matchMedia('(max-width: 820px)').matches;
+const LAY_KEY = 'emenda-layout', LAYOUTS = [['auto', 'Automático'], ['left', 'Esquerda'], ['right', 'Direita'], ['bottom', 'Embaixo']];
+function layPref() { try { return localStorage.getItem(LAY_KEY) || 'auto'; } catch (_) { return 'auto'; } }
+function applyLayout() { // automático: embaixo em telas estreitas, à esquerda nas largas
+  const p = layPref(), mode = p === 'auto' ? (isSmall() ? 'bottom' : 'left') : p;
+  document.body.classList.toggle('lay-bottom', mode === 'bottom'); document.body.classList.toggle('lay-right', mode === 'right');
+}
+applyLayout();
+const isMobile = () => document.body.classList.contains('lay-bottom'); // ferramentas embaixo: painel abre e fecha
 
 const FONTS = ['Inter', 'Montserrat', 'Playfair Display', 'DM Serif Display', 'Instrument Serif', 'Bebas Neue', 'Space Grotesk', 'Syne', 'Caveat', 'Archivo Black', 'Cormorant Garamond', 'Josefin Sans', 'Arial', 'Helvetica', 'Georgia', 'Times New Roman', 'Courier New', 'system-ui'];
 
@@ -1234,6 +1247,7 @@ const ACT = {
   openProject() { $('#projIn').click(); },
   saveProject() { saveProjectFile(); },
   loadFont() { $('#fontIn').click(); },
+  layout(m) { try { localStorage.setItem(LAY_KEY, m); } catch (_) { } applyLayout(); ui.panel = 'project'; renderPanel(); toast({ auto: 'Ferramentas na posição automática', left: 'Ferramentas à esquerda', right: 'Ferramentas à direita', bottom: 'Ferramentas embaixo' }[m] || ''); },
   snap() { ui.snap = !ui.snap; renderPanel(); }, seams() { ui.seams = !ui.seams; renderPanel(); dirty(); },
   preview() { openPreview(); }, export() { openExport(); },
   expFmt(f) { ui.exp.fmt = f; openExport(true); }, expSize(s) { ui.exp.size = +s; openExport(true); },
@@ -1447,6 +1461,8 @@ function panelBg() {
 }
 function panelProject() {
   return head('Projeto') + `<button class="btn wide" data-act="slice" style="margin-bottom:6px">${I('layout')} Fatiar uma imagem pronta</button><div class="bgrid"><button class="btn" data-act="saveProject">${I('download')} Salvar .json</button><button class="btn" data-act="openProject">${I('folder')} Abrir .json</button><button class="btn" data-act="loadFont">${I('text')} Carregar fonte</button><button class="btn" data-act="newProject">${I('plus')} Novo projeto</button></div>
+  <div class="sec">Posição das ferramentas</div><div class="seg">${LAYOUTS.map(([v, l]) => `<button class="${layPref() === v ? 'on' : ''}" data-act="layout" data-arg="${v}">${l}</button>`).join('')}</div>
+  <p class="note" style="margin:6px 0 0">Automático: embaixo no celular, à esquerda em telas maiores. Fica salvo neste aparelho.</p>
   <div class="sec">Editor</div><label class="chk"><input type="checkbox" data-act="snap" ${ui.snap ? 'checked' : ''}> Ímã (alinhar a slides e elementos)</label><label class="chk"><input type="checkbox" data-act="seams" ${ui.seams ? 'checked' : ''}> Mostrar divisões dos slides</label>
   <div class="sec">Atalhos</div><p class="note">
   <kbd>Ctrl</kbd>+<kbd>Z</kbd> / <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd> desfazer / refazer<br>
@@ -1880,7 +1896,7 @@ function buildStatic() {
 }
 function updHeader() {
   const n = $('#nSlides'); if (n) n.innerHTML = `${S.slides} <small>slide${S.slides > 1 ? 's' : ''}</small>`;
-  const r = $('#ratio'); if (r) { r.value = S.ratio; [...r.options].forEach(o => o.textContent = isMobile() ? o.value : RATIO_LABEL[o.value]); }
+  const r = $('#ratio'); if (r) { r.value = S.ratio; [...r.options].forEach(o => o.textContent = isSmall() ? o.value : RATIO_LABEL[o.value]); }
 }
 async function init() {
   buildStatic();
@@ -1890,7 +1906,7 @@ async function init() {
   resetHistory(); updHeader(); renderPanel(); resize(); fitInitial();
   setSaved(S.els.length ? 'Salvo neste navegador' : '');
   new ResizeObserver(() => { const had = CW; resize(); if (!had) fitInitial(); }).observe($('#stage'));
-  matchMedia('(max-width: 820px)').addEventListener('change', () => { updHeader(); renderPanel(); });
+  matchMedia('(max-width: 820px)').addEventListener('change', () => { applyLayout(); updHeader(); renderPanel(); });
   document.addEventListener('visibilitychange', () => { if (document.hidden) { clearTimeout(saveT); saveNow(); } if (document.hidden) pauseAll(); });
 }
 init();

@@ -2,6 +2,10 @@
 
 Editor pessoal de carrosséis contínuos para Instagram. Roda no navegador; as fotos não saem do aparelho.
 
+## Posição das ferramentas
+
+Em **Projeto → Posição das ferramentas**, escolha onde ficam as ferramentas: **Automático** (embaixo no celular, à esquerda em telas maiores), **Esquerda**, **Direita** ou **Embaixo**. No modo Embaixo, o painel abre sobre a barra e fecha ao tocar de novo na ferramenta ou numa área vazia. A escolha fica salva no aparelho.
+
 ## Vídeos curtos
 
 - Adicione vídeos de até 10 min pelo botão **Fotos**, arrastando ou colando, igual às fotos.
