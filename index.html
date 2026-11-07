@@ -813,10 +813,25 @@ function playerFor(e, rec) {
 }
 function dropPlayer(id) { const p = PLAYERS.get(id); if (!p) return; p.v.pause(); p.v.removeAttribute('src'); p.v.load(); PLAYERS.delete(id); for (const k of VCACHE.keys()) if (k.startsWith(id + '|')) VCACHE.delete(k); }
 const isPlaying = e => { const p = PLAYERS.get(e.id); return !!(p && !p.v.paused); };
+/* som no editor e na prévia: ligado por padrão, salvo no aparelho (não afeta a exportação) */
+let edSound = (() => { try { return localStorage.getItem('emenda-edsound') !== '0'; } catch (_) { return true; } })();
+// toca com som; se o navegador bloquear, toca sem som e avisa uma vez
+function playSound(v, on) {
+  v.muted = !on;
+  return v.play().catch(() => { if (!on) return; v.muted = true; v.play().catch(() => { }); if (!playSound.warned) { playSound.warned = true; toast('O navegador bloqueou o som; tocando sem som.'); } });
+}
+function setEdSound(on) {
+  edSound = on; try { localStorage.setItem('emenda-edsound', on ? '1' : '0'); } catch (_) { }
+  for (const p of PLAYERS.values()) if (!p.v.paused) playSound(p.v, on);
+}
 function togglePlay(e) {
   if (e.still) return;
   const rec = IMGS.get(e.img.id), v = playerFor(e, rec), { a, b } = trimOf(e, rec);
-  if (v.paused) { if (v.currentTime < a - 0.05 || v.currentTime >= b - 0.05) v.currentTime = a; v.play().catch(() => { }); } else v.pause();
+  if (v.paused) {
+    for (const [id, p] of PLAYERS) if (id !== e.id && !p.v.paused) p.v.pause(); // um vídeo por vez, para o som não embolar
+    if (v.currentTime < a - 0.05 || v.currentTime >= b - 0.05) v.currentTime = a;
+    playSound(v, edSound);
+  } else v.pause();
   setTimeout(() => { dirty(); if (ui.sel === e.id) renderPanel(); }, 30);
 }
 function seekStill(e) { const rec = IMGS.get(e.img.id), v = playerFor(e, rec); v.pause(); v.currentTime = stillT(e, rec); }
@@ -1219,6 +1234,7 @@ const ACT = {
     const s = selEl(); if (!s || !s.still) return; const rec = IMGS.get(s.img.id);
     s.frameT = clamp(stillT(s, rec) + (+d) / 30, 0, Math.max(0, rec.dur - 0.05)); seekStill(s); syncPanel(true); clearTimeout(nudgeT); nudgeT = setTimeout(commit, 400);
   },
+  vEdSound() { setEdSound(!edSound); renderPanel(); },
   vPlay() { const s = selEl(); if (s && isVidEl(s)) togglePlay(s); },
   vSound() { const s = selEl(); if (!s) return; s.mute = !s.mute; commit(); renderPanel(); },
   lock() { const s = selEl(); if (!s) return; s.locked = !s.locked; commit(); renderPanel(); dirty(); },
@@ -1369,9 +1385,9 @@ function panelImage(el) {
     <div class="row"><label>Início</label><input type="range" min="0" max="${rec.dur}" step="${st}" data-prop="trim.a" data-scope="el"><span class="val" data-val="trim.a"></span></div>
     <div class="row"><label>Fim</label><input type="range" min="0" max="${rec.dur}" step="${st}" data-prop="trim.b" data-scope="el"><span class="val" data-val="trim.b"></span></div>
     <p class="note" id="trimInfo" style="margin:2px 0 8px">${trimNote(el, rec)}</p>
-    <button class="btn wide ${isPlaying(el) ? '' : 'primary'}" data-act="vPlay">${isPlaying(el) ? '❚❚ Pausar' : '▶ Tocar trecho'}</button>
+    <div class="bgrid"><button class="btn ${isPlaying(el) ? '' : 'primary'}" data-act="vPlay">${isPlaying(el) ? '❚❚ Pausar' : '▶ Tocar trecho'}</button><button class="btn" data-act="vEdSound" title="Som ao tocar no editor e na prévia">${edSound ? '🔊 Com som' : '🔇 Sem som'}</button></div>
     <label class="chk" style="margin-top:8px"><input type="checkbox" data-act="vSound" ${el.mute ? '' : 'checked'}> Som do vídeo na exportação</label>
-    <p class="note" style="margin:2px 0 0">No editor o vídeo fica parado e toca sem som quando você aperta ▶. Os slides em que ele aparece são exportados como vídeo, só com o trecho escolhido.</p>`;
+    <p class="note" style="margin:2px 0 0">No editor o vídeo fica parado e toca quando você aperta ▶ (o botão 🔊/🔇 liga ou desliga o som aqui no app). Os slides em que ele aparece são exportados como vídeo, só com o trecho escolhido.</p>`;
   }
   h += `<label class="chk" style="margin-top:8px"><input type="checkbox" data-act="keepRatio" ${ratioLocked(el) ? 'checked' : ''}> Manter proporção ao redimensionar</label>`;
   if (el.img && (el.cut || (rec && rec.alpha))) h += `<label class="chk" style="margin-top:8px"><input type="checkbox" data-act="cut" ${el.cut ? 'checked' : ''}> Recorte: contorno e sombra seguem a figura</label>`;
@@ -1806,12 +1822,14 @@ function makeZip(files) {
 function openModal(html) { $('#mbox').innerHTML = html; $('#modal').classList.add('show'); }
 function closeModal() { $('#modal').classList.remove('show'); $('#mbox').innerHTML = ''; }
 $('#modal').addEventListener('click', e => { if (e.target.id === 'modal') closeModal(); });
+let pvSound = () => { };
 async function openPreview() {
-  select(null); await waitFonts(); await settleStills();
+  pvSound = () => { };
+  select(null); pauseAll(); await waitFonts(); await settleStills();
   const PW = 720, ph = Math.round(H() * PW / W), live = range(S.slides).filter(slideHasVideo);
   const urls = []; for (let i = 0; i < S.slides; i++) urls.push(live.includes(i) ? null : URL.createObjectURL(await toBlob(renderSlide(i, PW), 'image/jpeg', 0.88)));
   const cell = (u, i) => u ? `<img src="${u}" alt="">` : `<canvas width="${PW}" height="${ph}" data-live="${i}"></canvas>`;
-  openModal(`<div class="ph"><h3>Pré-visualização</h3><button class="btn icon" data-act="closeModal">${I('x')}</button></div>
+  openModal(`<div class="ph"><h3>Pré-visualização</h3><span class="sp"></span>${live.length ? `<button class="btn" id="pvSnd" style="margin-right:6px">${edSound ? '🔊 Com som' : '🔇 Sem som'}</button>` : ''}<button class="btn icon" data-act="closeModal">${I('x')}</button></div>
   <div class="phone"><div class="top"><span class="av"></span>seu_perfil</div><div class="pvwrap"><div class="pv" id="pv">${urls.map(cell).join('')}</div><span class="pvcount" id="pvc">1/${S.slides}</span></div><div class="dots" id="dots">${urls.map((_, i) => `<i class="${i ? '' : 'on'}"></i>`).join('')}</div></div>
   <div class="strip">${urls.map(cell).join('')}</div>
   <p class="note" style="margin-top:10px">Deslize para conferir as emendas. A faixa embaixo mostra o carrossel inteiro.</p>`);
@@ -1820,6 +1838,15 @@ async function openPreview() {
     const els = [...new Set(live.flatMap(slideVideoEls))];
     let ses = null; try { ses = await videoSession(els); } catch (_) { }
     if (ses) ses.items.forEach(s => s.v.play().catch(() => { }));
+    // só o slide que está na tela tem som (como no Instagram); respeita "Som do vídeo na exportação"
+    const pv0 = $('#pv');
+    pvSound = () => {
+      if (!ses || !pv0.isConnected) return;
+      const vis = new Set(slideVideoEls(Math.round(pv0.scrollLeft / pv0.clientWidth)).map(e => e.id));
+      for (const s of ses.items) { const want = edSound && vis.has(s.e.id) && !s.e.mute; if (want === s.v.muted) playSound(s.v, want); }
+    };
+    pvSound();
+    const sb = $('#pvSnd'); if (sb) sb.addEventListener('click', () => { setEdSound(!edSound); sb.textContent = edSound ? '🔊 Com som' : '🔇 Sem som'; pvSound(); });
     const loop = t => {
       if (!cs[0].isConnected) { if (ses) ses.stop(); return; }
       if (t - last > 32) { last = t; if (ses) ses.wrap(); cs.forEach(c => drawRegion(c.getContext('2d'), +c.dataset.live * W, W, PW, cache, ses && ses.vmap)); }
@@ -1827,7 +1854,7 @@ async function openPreview() {
     };
     requestAnimationFrame(loop);
   }
-  const pv = $('#pv'); pv.addEventListener('scroll', () => { const i = Math.round(pv.scrollLeft / pv.clientWidth); $('#pvc').textContent = `${i + 1}/${S.slides}`; document.querySelectorAll('#dots i').forEach((d, k) => d.classList.toggle('on', k === i)); });
+  const pv = $('#pv'); pv.addEventListener('scroll', () => { pvSound(); const i = Math.round(pv.scrollLeft / pv.clientWidth); $('#pvc').textContent = `${i + 1}/${S.slides}`; document.querySelectorAll('#dots i').forEach((d, k) => d.classList.toggle('on', k === i)); });
 }
 function openExport(keep) {
   if (!keep) { select(null); ui.exp.pick = new Set(range(S.slides)); }
