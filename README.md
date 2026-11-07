@@ -10,7 +10,8 @@ Em **Projeto → Posição das ferramentas**, escolha onde ficam as ferramentas:
 
 - Adicione vídeos de até 10 min pelo botão **Fotos**, arrastando ou colando, igual às fotos.
 - Em **Trecho do vídeo**, no painel, escolha início e fim. O trecho pode ter até 60 s, o limite do Instagram por slide.
-- No editor o vídeo fica parado no início do trecho. Aperte ▶ no canto do vídeo, ou **Tocar trecho** no painel, para ver o trecho em loop e sem som.
+- No editor o vídeo fica parado no início do trecho. Aperte ▶ no canto do vídeo, ou **Tocar trecho** no painel, para ver o trecho em loop, com som. Tocar um vídeo pausa os outros, e o botão 🔊/🔇 no painel liga ou desliga o som no app (não muda a exportação).
+- Na **Prévia**, só o slide que está na tela toca com som, como no Instagram.
 - Em **Usar → Só um quadro**, a moldura vira uma foto com o quadro que você escolher (com ◀ ▶ para ajustar quadro a quadro), e o slide é exportado como imagem. Toque em **Vídeo** para voltar.
 - O vídeo funciona como uma foto: enquadrar, filtros, ajustes, borda, rotação e até atravessar a divisa entre slides.
 - Na exportação, todo slide que tem vídeo vira um arquivo de vídeo (MP4 quando o navegador permite, senão WebM), com a duração do trecho mais longo do slide. Os outros slides continuam saindo como imagem.
