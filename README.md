@@ -22,6 +22,18 @@ Toque em **Selecionar** (embaixo do carrossel) e depois nos itens; no computador
 - A gravação acontece em tempo real: um vídeo de 15 s leva cerca de 15 s para exportar. Mantenha a aba aberta.
 - O som do vídeo entra no arquivo exportado. Dá para desligar em **Som do vídeo na exportação**, no painel do vídeo.
 
+## Testes automáticos
+
+A pasta `tests/` tem testes que abrem o app num navegador de verdade e conferem as principais funções: fotos, exportação, prévia, vídeos (tocar, som, trecho, só um quadro), seleção de vários itens e posição das ferramentas. Eles rodam sozinhos no GitHub (aba **Actions**, “Testes”) a cada pull request e a cada atualização do `main`; o resultado aparece como ✅ ou ❌ no pull request.
+
+Para rodar no computador (precisa do Node.js):
+
+```
+npm install
+npx playwright install chromium
+npm test
+```
+
 ## Publicação
 
 O app é publicado pelo GitHub Pages a cada atualização do `main`. Se uma publicação travar ou falhar na aba **Actions**, basta executá-la de novo ou fazer uma nova atualização no `main`.
