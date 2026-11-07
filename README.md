@@ -6,6 +6,10 @@ Editor pessoal de carrosséis contínuos para Instagram. Roda no navegador; as f
 
 Em **Projeto → Posição das ferramentas**, escolha onde ficam as ferramentas: **Automático** (embaixo no celular, à esquerda em telas maiores), **Esquerda**, **Direita** ou **Embaixo**. No modo Embaixo, o painel abre sobre a barra e fecha ao tocar de novo na ferramenta ou numa área vazia. A escolha fica salva no aparelho.
 
+## Selecionar vários itens
+
+Toque em **Selecionar** (embaixo do carrossel) e depois nos itens; no computador, Shift+clique também funciona. Com vários selecionados dá para aplicar moldura (Polaroid, borda fina, só sombra ou sem moldura), cantos, borda, sombra, filtro e ajustes em todos de uma vez, além de excluir, duplicar, travar, trazer para frente ou mandar para trás. Arraste um item selecionado para mover todos juntos.
+
 ## Vídeos curtos
 
 - Adicione vídeos de até 10 min pelo botão **Fotos**, arrastando ou colando, igual às fotos.
