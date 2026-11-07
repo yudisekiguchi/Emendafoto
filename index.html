@@ -171,7 +171,16 @@ body.lay-bottom .tool{padding:6px 4px;min-width:50px;flex:0 1 84px}
 body.lay-bottom .ph .x{display:inline-flex}
 body.lay-bottom #pager{bottom:8px}
 body.lay-bottom .tpls{grid-template-columns:repeat(auto-fill,minmax(150px,1fr))}
-@media (min-width:821px){body.lay-bottom #panel{max-height:40vh}body.lay-bottom .bgrid,body.lay-bottom .acts{max-width:640px}}
+@media (min-width:821px){body.lay-bottom #panel{max-height:40vh}}
+/* embaixo em tela larga: o painel se distribui em colunas e usa a largura toda */
+@media (min-width:700px){
+  body.lay-bottom .pc{columns:300px;column-gap:28px}
+  body.lay-bottom .pc>*{break-inside:avoid}
+  body.lay-bottom .pc>.sec{break-after:avoid;margin-top:12px}
+  body.lay-bottom .pc>.ph,body.lay-bottom .pc>.tpls{column-span:all}
+  body.lay-bottom .pc>.ph{margin-bottom:8px}
+  body.lay-bottom .pc>.acts{margin-bottom:6px}
+}
 </style>
 </head>
 <body>
@@ -1328,7 +1337,7 @@ function renderPanel() {
   else if (mode === 'stickers') h = panelStickers();
   else if (mode === 'bg') h = panelBg();
   else if (mode === 'project') h = panelProject();
-  p.innerHTML = h; syncPanel(true);
+  p.innerHTML = `<div class="pc">${h}</div>`; syncPanel(true);
   if (mode === 'layouts') drawTplThumbs();
   const lq = $('#libQ'); if (lq) lq.addEventListener('input', () => { ui.libQ = lq.value; $('#libWrap').innerHTML = libGridHTML(); });
   if (el && el.type === 'image' && el.img) drawPresetThumbs(el);
