@@ -6,6 +6,10 @@ Editor pessoal de carrosséis contínuos para Instagram. Roda no navegador; as f
 
 Em **Projeto → Posição das ferramentas**, escolha onde ficam as ferramentas: **Automático** (embaixo no celular, à esquerda em telas maiores), **Esquerda**, **Direita** ou **Embaixo**. No modo Embaixo, o painel abre sobre a barra e fecha ao tocar de novo na ferramenta ou numa área vazia. A escolha fica salva no aparelho.
 
+## Selecionar vários itens
+
+Toque em **Selecionar** (embaixo do carrossel) e depois nos itens; no computador, Shift+clique também funciona. Com vários selecionados dá para aplicar moldura (Polaroid, borda fina, só sombra ou sem moldura), cantos, borda, sombra, filtro e ajustes em todos de uma vez, além de excluir, duplicar, travar, trazer para frente ou mandar para trás. Arraste um item selecionado para mover todos juntos.
+
 ## Vídeos curtos
 
 - Adicione vídeos de até 10 min pelo botão **Fotos**, arrastando ou colando, igual às fotos.
@@ -17,6 +21,18 @@ Em **Projeto → Posição das ferramentas**, escolha onde ficam as ferramentas:
 - Na exportação, todo slide que tem vídeo vira um arquivo de vídeo (MP4 quando o navegador permite, senão WebM), com a duração do trecho mais longo do slide. Os outros slides continuam saindo como imagem.
 - A gravação acontece em tempo real: um vídeo de 15 s leva cerca de 15 s para exportar. Mantenha a aba aberta.
 - O som do vídeo entra no arquivo exportado. Dá para desligar em **Som do vídeo na exportação**, no painel do vídeo.
+
+## Testes automáticos
+
+A pasta `tests/` tem testes que abrem o app num navegador de verdade e conferem as principais funções: fotos, exportação, prévia, vídeos (tocar, som, trecho, só um quadro), seleção de vários itens e posição das ferramentas. Eles rodam sozinhos no GitHub (aba **Actions**, “Testes”) a cada pull request e a cada atualização do `main`; o resultado aparece como ✅ ou ❌ no pull request.
+
+Para rodar no computador (precisa do Node.js):
+
+```
+npm install
+npx playwright install chromium
+npm test
+```
 
 ## Publicação
 

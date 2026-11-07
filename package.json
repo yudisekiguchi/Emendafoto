@@ -1,0 +1,11 @@
+{
+  "name": "emenda",
+  "private": true,
+  "description": "Editor local de carrosséis contínuos para Instagram",
+  "scripts": {
+    "test": "playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.63.0"
+  }
+}
