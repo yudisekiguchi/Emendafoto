@@ -282,7 +282,7 @@ const I = (n, cls = 'ico') => `<svg class="${cls}" viewBox="0 0 24 24">${IC[n] |
 
 /* ---------- estado ---------- */
 function defaultState() {
-  return { v: 1, slides: 3, ratio: '4:5', bg: { type: 'solid', c1: '#ffffff', c2: '#e9dccb', angle: 90, grain: 0 }, els: [], customFonts: [], layout: null };
+  return { v: 1, slides: 3, ratio: '4:5', bg: { type: 'solid', c1: '#ffffff', c2: '#e9dccb', angle: 90, grain: 0, pat: '', patColor: '#9ec3e6', patSize: 40, patAlpha: 60 }, els: [], customFonts: [], layout: null };
 }
 let S = defaultState();
 const H = () => RATIOS[S.ratio] || 1350;
@@ -655,14 +655,39 @@ function drawGrain(c, x0, y0, w, h, amt) {
   if (amt <= 0) return; const p = c.createPattern(noiseCanvas(), 'repeat'); if (p.setTransform && window.DOMMatrix) p.setTransform(new DOMMatrix().scale(2));
   c.save(); c.globalCompositeOperation = 'multiply'; c.globalAlpha *= amt; c.fillStyle = p; c.fillRect(x0, y0, w, h); c.restore();
 }
-function drawBg(c) {
-  const w = TW(), h = H(), b = S.bg;
+const BG_PATS = [['', 'Nenhum'], ['dots', 'Bolinhas'], ['stripes', 'Listras'], ['diag', 'Diagonais'], ['grid', 'Quadriculado'], ['check', 'Xadrez'], ['gingham', 'Piquenique'], ['lines', 'Pautado'], ['waves', 'Ondas']];
+const BGTILE = { key: '', tile: null };
+function bgPatternTile(b) {
+  const s = Math.max(8, +b.patSize || 40), key = [b.pat, b.patColor, s].join('|');
+  if (BGTILE.key === key) return BGTILE.tile;
+  const k = 3, T = Math.max(8, Math.round(s * k)), t = document.createElement('canvas'); t.width = t.height = T;
+  const x = t.getContext('2d'); x.scale(T / s, T / s); x.fillStyle = x.strokeStyle = b.patColor || '#000';
+  const lw = Math.max(1.5, s * 0.05);
+  switch (b.pat) {
+    case 'dots': x.beginPath(); x.arc(s / 2, s / 2, s * 0.17, 0, Math.PI * 2); x.fill(); break;
+    case 'stripes': x.fillRect(0, 0, s / 2, s); break;
+    case 'diag': x.lineWidth = s * 0.22; x.beginPath(); for (const o of [-s, 0, s]) { x.moveTo(o, s); x.lineTo(o + s, 0); } x.stroke(); break;
+    case 'grid': x.fillRect(0, 0, lw, s); x.fillRect(0, 0, s, lw); break;
+    case 'check': x.fillRect(0, 0, s / 2, s / 2); x.fillRect(s / 2, s / 2, s / 2, s / 2); break;
+    case 'gingham': x.globalAlpha = 0.5; x.fillRect(0, 0, s / 2, s); x.fillRect(0, 0, s, s / 2); break;
+    case 'lines': x.fillRect(0, s - lw, s, lw); break;
+    case 'waves': x.lineWidth = s * 0.07; x.beginPath(); for (let i = 0; i <= 32; i++) { const px = i * s / 32, py = s / 2 + Math.sin(i / 32 * Math.PI * 2) * s * 0.18; i ? x.lineTo(px, py) : x.moveTo(px, py); } x.stroke(); break;
+  }
+  BGTILE.key = key; BGTILE.tile = t; return t;
+}
+function drawBgPattern(c, w, h, b) {
+  const t = bgPatternTile(b), s = Math.max(8, +b.patSize || 40), p = c.createPattern(t, 'repeat'); if (!p) return;
+  if (p.setTransform && window.DOMMatrix) p.setTransform(new DOMMatrix().scale(s / t.width));
+  c.save(); c.globalAlpha *= clamp((b.patAlpha ?? 60) / 100, 0, 1); c.fillStyle = p; c.fillRect(0, 0, w, h); c.restore();
+}
+function drawBg(c, b = S.bg, w = TW(), h = H()) {
   if (b.type === 'grad') {
     const a = rad(b.angle), L = Math.abs(w * Math.sin(a)) + Math.abs(h * Math.cos(a)), cx = w / 2, cy = h / 2;
     const g = c.createLinearGradient(cx - Math.sin(a) * L / 2, cy + Math.cos(a) * L / 2, cx + Math.sin(a) * L / 2, cy - Math.cos(a) * L / 2);
     g.addColorStop(0, b.c1); g.addColorStop(1, b.c2); c.fillStyle = g;
   } else c.fillStyle = b.c1;
   c.fillRect(0, 0, w, h);
+  if (b.pat) drawBgPattern(c, w, h, b);
   if (b.grain > 0) drawGrain(c, 0, 0, w, h, b.grain / 100);
 }
 function drawPlaceholder(c, w, h) {
@@ -764,12 +789,35 @@ function tapePath(c, e) {
   for (let i = n - 1; i >= 0; i--) { c.lineTo(-w / 2 + t, -h / 2 + (i + 0.5) * h / n); c.lineTo(-w / 2, -h / 2 + i * h / n); }
   c.closePath();
 }
+function starPath(c, w, h, n, inner) {
+  c.beginPath();
+  for (let i = 0; i < n * 2; i++) { const a = -Math.PI / 2 + i * Math.PI / n, r = i % 2 ? inner : 1; const px = Math.cos(a) * w / 2 * r, py = Math.sin(a) * h / 2 * r; i ? c.lineTo(px, py) : c.moveTo(px, py); }
+  c.closePath();
+}
+function heartPath(c, w, h) {
+  const x = -w / 2, y = -h / 2; c.beginPath(); c.moveTo(0, y + h * 0.28);
+  c.bezierCurveTo(0, y, x, y, x, y + h * 0.32); c.bezierCurveTo(x, y + h * 0.62, 0, y + h * 0.78, 0, y + h);
+  c.bezierCurveTo(0, y + h * 0.78, -x, y + h * 0.62, -x, y + h * 0.32); c.bezierCurveTo(-x, y, 0, y, 0, y + h * 0.28); c.closePath();
+}
+function bubblePath(c, w, h) {
+  const x = -w / 2, y = -h / 2, bh = h * 0.78, r = Math.min(w, bh) * 0.3; c.beginPath(); c.moveTo(x + r, y);
+  c.arcTo(x + w, y, x + w, y + bh, r); c.arcTo(x + w, y + bh, x, y + bh, r);
+  c.lineTo(x + w * 0.38, y + bh); c.lineTo(x + w * 0.18, y + h); c.lineTo(x + w * 0.24, y + bh);
+  c.arcTo(x, y + bh, x, y, r); c.arcTo(x, y, x + w, y, r); c.closePath();
+}
+function arrowPath(c, w, h) {
+  const x = -w / 2, y = -h / 2, sh = h * 0.36, hx = x + w * 0.62; c.beginPath();
+  c.moveTo(x, -sh / 2); c.lineTo(hx, -sh / 2); c.lineTo(hx, y); c.lineTo(x + w, 0); c.lineTo(hx, y + h); c.lineTo(hx, sh / 2); c.lineTo(x, sh / 2); c.closePath();
+}
+const DECO_PATH = { star: (c, w, h) => starPath(c, w, h, 5, 0.45), sparkle: (c, w, h) => starPath(c, w, h, 4, 0.2), burst: (c, w, h) => starPath(c, w, h, 14, 0.8), heart: heartPath, bubble: bubblePath, arrow: arrowPath };
+const SHAPE_NAMES = { ellipse: 'Círculo', torn: 'Papel rasgado', tape: 'Fita adesiva', star: 'Estrela', sparkle: 'Brilho', burst: 'Selo', heart: 'Coração', bubble: 'Balão de fala', arrow: 'Seta' };
 function drawPattern(c, e) {
   const w = e.w, h = e.h, x0 = -w / 2, y0 = -h / 2; c.strokeStyle = c.fillStyle = e.patColor || 'rgba(0,0,0,.25)'; c.lineWidth = 3; c.beginPath();
   if (e.pat === 'grid') { for (let x = x0 + 20; x < w / 2; x += 40) { c.moveTo(x, y0); c.lineTo(x, -y0); } for (let y = y0 + 20; y < h / 2; y += 40) { c.moveTo(x0, y); c.lineTo(-x0, y); } c.stroke(); }
   else if (e.pat === 'lines') { for (let y = y0 + 46; y < h / 2; y += 46) { c.moveTo(x0, y); c.lineTo(-x0, y); } c.stroke(); }
   else if (e.pat === 'dots') { for (let y = y0 + 20; y < h / 2; y += 40) for (let x = x0 + 20; x < w / 2; x += 40) { c.moveTo(x + 7, y); c.arc(x, y, 7, 0, Math.PI * 2); } c.fill(); }
   else if (e.pat === 'stripes') { c.lineWidth = 22; for (let k = -h; k < w + h; k += 56) { c.moveTo(x0 + k, y0); c.lineTo(x0 + k - h, -y0); } c.stroke(); }
+  else if (e.pat === 'check') { for (let y = y0, r = 0; y < h / 2; y += 28, r++) for (let x = x0 + (r % 2) * 28; x < w / 2; x += 56) c.rect(x, y, 28, 28); c.fill(); }
 }
 function drawShape(c, e, o) {
   const w = e.w, h = e.h, s = e.stroke || 0;
@@ -777,11 +825,12 @@ function drawShape(c, e, o) {
     if (e.kind === 'ellipse') { c.beginPath(); c.ellipse(0, 0, Math.max(0, w / 2 - inset), Math.max(0, h / 2 - inset), 0, 0, Math.PI * 2); }
     else if (e.kind === 'torn') tornPath(c, e);
     else if (e.kind === 'tape') tapePath(c, e);
+    else if (DECO_PATH[e.kind]) DECO_PATH[e.kind](c, w, h);
     else rr(c, -w / 2 + inset, -h / 2 + inset, w - 2 * inset, h - 2 * inset, Math.max(0, e.radius - inset));
   };
   if (e.fill) { if (e.shadow > 0) setShadow(c, e.shadow, o); path(0); c.fillStyle = e.fill; c.fill(); noShadow(c); }
   if (e.pat || e.grain) { c.save(); path(0); c.clip(); if (e.pat) drawPattern(c, e); if (e.grain) drawGrain(c, -w / 2, -h / 2, w, h, 0.55); c.restore(); }
-  const ins = (e.kind === 'torn' || e.kind === 'tape') ? 0 : s / 2;
+  const ins = (e.kind === 'torn' || e.kind === 'tape' || DECO_PATH[e.kind]) ? 0 : s / 2;
   if (s > 0) { if (!e.fill && e.shadow > 0) setShadow(c, e.shadow, o); path(ins); c.lineWidth = s; c.strokeStyle = e.strokeColor; c.stroke(); noShadow(c); }
 }
 
@@ -1334,6 +1383,8 @@ const ACT = {
   },
   tpl(id) { applyTemplate(id); },
   bgType(t) { S.bg.type = t; commit(); renderPanel(); dirty(); },
+  bgPat(v) { S.bg.pat = v; commit(); renderPanel(); dirty(); },
+  bgPreset(k) { const P = BG_PRESETS.find(x => x.id === k); if (!P) return; Object.assign(S.bg, { type: 'solid', pat: '', grain: 0 }, P.bg); commit(); renderPanel(); dirty(); },
   bgSw(v) { const [a, b] = v.split(','); S.bg.c1 = a; if (b) { S.bg.c2 = b; S.bg.type = 'grad'; } else S.bg.type = 'solid'; commit(); renderPanel(); dirty(); },
   preset(p) { const s = selEl(); if (!s) return; s.adj.preset = p; commit(); renderPanel(); dirty(); },
   resetAdj() { const s = selEl(); if (!s) return; const p = s.adj.preset; s.adj = defAdj(); s.adj.preset = p; commit(); renderPanel(); dirty(); },
@@ -1352,10 +1403,24 @@ const ACT = {
   cut() { const s = selEl(); if (!s) return; s.cut = !s.cut; if (s.cut && !s.stroke) { s.stroke = 14; s.strokeColor = '#ffffff'; } commit(); renderPanel(); dirty(); },
   grainToggle() { const s = selEl(); if (!s) return; s.grain = !s.grain; commit(); renderPanel(); dirty(); },
   reTear() { const s = selEl(); if (!s) return; s.seed = 1 + Math.floor(Math.random() * 1e6); commit(); dirty(); },
-  addTape() { const c = slideCenter(); const e = newShape('tape', 0, 0, 440, 96); Object.assign(e, { fill: '#f4a7c0', opacity: 0.88, pat: 'dots', patColor: 'rgba(255,255,255,0.75)', rot: -6 }); setCenter(e, c); addEl(e); },
+  addTape(v) {
+    const T = { rosa: { fill: '#f4a7c0', pat: 'dots', patColor: 'rgba(255,255,255,0.75)' }, azul: { fill: '#9ec3e6', pat: 'stripes', patColor: 'rgba(255,255,255,0.6)' }, verde: { fill: '#b8e0c8', pat: 'check', patColor: 'rgba(255,255,255,0.55)' }, amarela: { fill: '#ffe066', pat: '' }, kraft: { fill: '#c9a77c', pat: '', grain: true } }[v || 'rosa'] || {};
+    const c = slideCenter(); const e = newShape('tape', 0, 0, 440, 96); Object.assign(e, { opacity: 0.88, rot: -6 }, T); setCenter(e, c); addEl(e);
+  },
+  addDeco(k) {
+    const D = { star: [420, 420, '#ffd23f'], heart: [420, 380, '#ff5d73'], sparkle: [300, 300, '#ffd23f'], burst: [460, 460, '#ff924c'], bubble: [560, 420, '#ffffff'], arrow: [520, 200, autoInk()] }[k]; if (!D) return;
+    const c = slideCenter(); const e = newShape(k, 0, 0, D[0], D[1]); e.fill = D[2];
+    if (k === 'bubble') { e.stroke = 6; e.strokeColor = '#111111'; }
+    setCenter(e, c); addEl(e);
+  },
   addTorn() { const c = slideCenter(); const e = newShape('torn', 0, 0, 640, 440); Object.assign(e, { fill: '#e8d3b0', grain: true, shadow: 12, rot: 3 }); setCenter(e, c); addEl(e); },
   addGridPaper() { const c = slideCenter(); const e = newShape('torn', 0, 0, 560, 420); Object.assign(e, { fill: '#fbfbf6', pat: 'grid', patColor: '#a9c8e8', grain: true, shadow: 10, rot: -3 }); setCenter(e, c); addEl(e); },
-  addLabel() { const c = slideCenter(); const t = newText('SHOW', { font: 'Archivo Black', weight: 400, size: 76, color: '#111111', bg: '#ffe14d', radius: 6, w: 900, rot: -4 }); const L = layoutText(t); t.w = L.mw + 2 * L.pad + 4; layoutText(t); setCenter(t, c); addEl(t); },
+  addLabel(v) {
+    const L0 = { show: ['SHOW', '#ffe14d', '#111111'], novo: ['NOVO!', '#ff595e', '#ffffff'], parte: ['PARTE 1', '#111111', '#ffffff'], antes: ['ANTES', '#ffffff', '#111111'], depois: ['DEPOIS', '#111111', '#ffffff'], salve: ['SALVE ✦', '#c9f2d0', '#111111'] }[v || 'show'] || ['SHOW', '#ffe14d', '#111111'];
+    const make = () => { const c = slideCenter(); const t = newText(L0[0], { font: 'Archivo Black', weight: 400, size: 76, color: L0[2], bg: L0[1], radius: 6, w: 900, rot: -4 }); const L = layoutText(t); t.w = L.mw + 2 * L.pad + t.size * 0.12; layoutText(t); setCenter(t, c); addEl(t); };
+    // mede só depois de a fonte da etiqueta carregar; senão a largura fica curta e o texto quebra
+    if (document.fonts && document.fonts.load) { const to = new Promise(r => setTimeout(r, 1500)); Promise.race([document.fonts.load('400 76px "Archivo Black"'), to]).catch(() => { }).then(() => { TL = new WeakMap(); make(); }); } else make();
+  },
   libPick() { $('#libIn').click(); }, libDir() { $('#libDir').click(); },
   libEdit() { ui.libEdit = !ui.libEdit; renderPanel(); },
   async libAdd(id) {
@@ -1425,6 +1490,7 @@ function renderPanel() {
   else if (mode === 'project') h = panelProject();
   p.innerHTML = `<div class="pc">${h}</div>`; syncPanel(true);
   if (mode === 'layouts') drawTplThumbs();
+  if (mode === 'bg') drawBgPresetThumbs();
   const lq = $('#libQ'); if (lq) lq.addEventListener('input', () => { ui.libQ = lq.value; $('#libWrap').innerHTML = libGridHTML(); });
   if (el && el.type === 'image' && el.img) drawPresetThumbs(el);
 }
@@ -1516,12 +1582,12 @@ function panelText(el) {
 }
 ACT.align = a => { const s = selEl(); if (!s) return; s.align = a; commit(); renderPanel(); dirty(); };
 function panelShape(el) {
-  let h = head({ ellipse: 'Círculo', torn: 'Papel rasgado', tape: 'Fita adesiva' }[el.kind] || 'Forma');
+  let h = head(SHAPE_NAMES[el.kind] || 'Forma');
   h += `<div class="acts" style="margin-bottom:6px">${A('dup', 'copy', 'Duplicar')}${A('front', 'front', 'Frente')}${A('back', 'back', 'Trás')}${A('del', 'trash', 'Excluir', false, 'danger')}</div>`;
   h += `<div class="sec">Estilo</div><label class="chk"><input type="checkbox" data-act="nofill" ${el.fill ? 'checked' : ''}> Preenchimento</label>`;
   if (el.fill) h += C('Cor', 'fill');
   if (el.kind === 'rect') h += R('Cantos', 'radius', 0, 540, 1);
-  if (el.kind !== 'ellipse') h += `<div class="row"><label>Padrão</label><select data-prop="pat" data-scope="el">${[['', 'Liso'], ['grid', 'Quadriculado'], ['lines', 'Pautado'], ['dots', 'Bolinhas'], ['stripes', 'Listras']].map(([v, l]) => `<option value="${v}">${l}</option>`).join('')}</select></div>` + C('Cor do padrão', 'patColor');
+  if (el.kind !== 'ellipse') h += `<div class="row"><label>Padrão</label><select data-prop="pat" data-scope="el">${[['', 'Liso'], ['grid', 'Quadriculado'], ['lines', 'Pautado'], ['dots', 'Bolinhas'], ['stripes', 'Listras'], ['check', 'Xadrez']].map(([v, l]) => `<option value="${v}">${l}</option>`).join('')}</select></div>` + C('Cor do padrão', 'patColor');
   h += `<label class="chk"><input type="checkbox" data-act="grainToggle" ${el.grain ? 'checked' : ''}> Textura de papel</label>`;
   if (el.kind === 'torn') h += `<button class="btn wide" data-act="reTear" style="margin:4px 0">Rasgar de outro jeito</button>`;
   h += R('Borda', 'stroke', 0, 80, 1) + C('Cor da borda', 'strokeColor') + R('Sombra', 'shadow', 0, 100, 1) + R('Opacidade', 'opacity', 0, 1, 0.01) + R('Rotação', 'rot', -180, 180, 1);
@@ -1539,7 +1605,16 @@ function panelLayouts() {
 function panelShapes() {
   return head('Elementos') + `<div class="bgrid"><button class="btn" data-act="addFrame">${I('image')} Moldura de foto</button><button class="btn" data-act="addRect">${I('shape')} Retângulo</button><button class="btn" data-act="addCircle">◯ Círculo</button><button class="btn" data-act="addLine">— Linha</button><button class="btn" data-act="addBand">▭ Faixa contínua</button><button class="btn" data-act="addText">${I('text')} Texto</button></div><p class="note">A faixa contínua atravessa todos os slides — ótima para dar sensação de continuidade ao deslizar.</p>`;
 }
-const EMOJI = ['✨', '⭐', '❤️', '🤍', '🖤', '🔥', '🌸', '🌿', '🌼', '☀️', '🌙', '☁️', '🌊', '🏔️', '📸', '🎞️', '✈️', '🗺️', '📍', '☕', '🍷', '🍕', '🎉', '💫', '🦋', '🌈', '👀', '💬', '✌️', '🙌', '→', '↗', '✦', '✿', '★', '♡'];
+const EMOJI_GROUPS = [
+  ['Destaques', '✨ ⭐ ❤️ 🤍 🖤 🔥 💫 🌈 👀 💬 ✌️ 🙌'],
+  ['Amor', '💖 💕 💘 💝 💞 💗 🥰 😍 😘 💋 🌹 🫶'],
+  ['Natureza', '🌸 🌿 🌼 🌻 🌷 🍀 🍃 🌙 ☀️ ☁️ 🌊 🏔️ 🦋 🐚 🌵 🍂'],
+  ['Comida', '☕ 🍷 🍕 🍰 🍩 🍓 🍉 🥑 🍔 🍦 🧁 🍾'],
+  ['Viagem', '✈️ 🗺️ 📍 📸 🎞️ 🚗 🏖️ 🏝️ 🧳 🗽 🎡 ⛺'],
+  ['Festa e música', '🎉 🎈 🎁 🎂 🥳 🎊 🎶 🎤 🎸 💃 🪩 🏆'],
+  ['Símbolos', '→ ↗ ↓ ✦ ✿ ★ ♡ ✓ ✗ ① ② ③']
+].map(([n, l]) => [n, l.split(' ')]);
+const DECOS = [['star', '★ Estrela'], ['heart', '♥ Coração'], ['sparkle', '✦ Brilho'], ['burst', '✺ Selo'], ['bubble', '💬 Balão'], ['arrow', '➜ Seta']];
 function libGridHTML() {
   const q = (ui.libQ || '').toLowerCase(), items = LIB.filter(it => !q || it.name.toLowerCase().includes(q)).slice(0, 300);
   if (!LIB.length) return '';
@@ -1551,22 +1626,55 @@ function panelStickers() {
   ${LIB.length > 12 ? `<input class="search" id="libQ" placeholder="Buscar na biblioteca (${LIB.length})" value="${esc(ui.libQ || '')}">` : ''}
   <div id="libWrap">${libGridHTML()}</div>
   ${LIB.length ? `<button class="btn wide" data-act="libEdit" style="margin-top:8px">${ui.libEdit ? 'Concluir' : 'Remover itens'}</button>` : ''}
-  <div class="sec">Scrapbook</div><div class="bgrid"><button class="btn" data-act="addTape">Fita adesiva</button><button class="btn" data-act="addTorn">Papel rasgado</button><button class="btn" data-act="addGridPaper">Papel quadriculado</button><button class="btn" data-act="addLabel">Etiqueta</button></div>
-  <div class="sec">Emojis</div><div class="emo">${EMOJI.map(e => `<button data-act="addSticker" data-arg="${e}">${e}</button>`).join('')}</div><div class="sec">Para carrossel</div><div class="bgrid"><button class="btn" data-act="addSwipe">deslize →</button><button class="btn" data-act="numbers">Numerar 1/${S.slides}</button></div><p class="note">Stickers são texto: dá para mudar tamanho, girar e pôr sombra.</p>`;
+  <div class="sec">Formas</div><div class="bgrid">${DECOS.map(([k, l]) => `<button class="btn" data-act="addDeco" data-arg="${k}">${l}</button>`).join('')}</div>
+  <div class="sec">Fitas adesivas</div><div class="sws">${[['rosa', '#f4a7c0'], ['azul', '#9ec3e6'], ['verde', '#b8e0c8'], ['amarela', '#ffe066'], ['kraft', '#c9a77c']].map(([k, c]) => `<button class="btn" style="height:32px;padding:0 10px;font-size:12px" data-act="addTape" data-arg="${k}"><i style="width:14px;height:14px;border-radius:3px;background:${c};display:inline-block"></i>${k[0].toUpperCase() + k.slice(1)}</button>`).join('')}</div>
+  <div class="sec">Scrapbook</div><div class="bgrid"><button class="btn" data-act="addTorn">Papel rasgado</button><button class="btn" data-act="addGridPaper">Papel quadriculado</button></div>
+  <div class="sec">Etiquetas</div><div class="chips">${[['show', 'SHOW'], ['novo', 'NOVO!'], ['parte', 'PARTE 1'], ['antes', 'ANTES'], ['depois', 'DEPOIS'], ['salve', 'SALVE ✦']].map(([k, l]) => `<button class="chip" data-act="addLabel" data-arg="${k}">${l}</button>`).join('')}</div>
+  ${EMOJI_GROUPS.map(([n, l]) => `<div class="sec">${n}</div><div class="emo">${l.map(e => `<button data-act="addSticker" data-arg="${e}">${e}</button>`).join('')}</div>`).join('')}<div class="sec">Para carrossel</div><div class="bgrid"><button class="btn" data-act="addSwipe">deslize →</button><button class="btn" data-act="numbers">Numerar 1/${S.slides}</button></div><p class="note">Emojis e etiquetas são texto, e as formas têm cor, borda e padrão editáveis: dá para mudar tamanho, girar e pôr sombra em todos.</p>`;
 }
-const SWATCH = ['#ffffff', '#f6f1ea', '#efe6da', '#e9dccb', '#d9cbb6', '#c9d3c0', '#dfe7ec', '#f3d6d0', '#1f2a44', '#2d2a26', '#111111', '#000000'];
-const GRADS = ['#f6d5c3,#c9d6f0', '#fbe3e8,#fff4d6', '#d4fc79,#96e6a1', '#a1c4fd,#c2e9fb', '#fccb90,#d57eeb', '#232526,#414345', '#0f2027,#2c5364', '#ffecd2,#fcb69f'];
+const SWATCHES = [
+  ['Neutros', '#ffffff #f6f1ea #efe6da #e9dccb #d9cbb6 #bfb5a8 #8c857b #2d2a26 #111111 #000000'],
+  ['Pastéis', '#fde2e4 #fad2e1 #e2ece9 #bee1e6 #dfe7fd #cddafd #fff1c1 #e4f1d0 #f0e1ff #ffd8be'],
+  ['Terrosos', '#c9a77c #b5835a #a0522d #7f5539 #9c6644 #ddb892 #6b705c #a5a58d #cb997e #e8ac65'],
+  ['Vibrantes', '#ff595e #ff924c #ffca3a #8ac926 #1982c4 #6a4c93 #f15bb5 #00bbf9 #00f5d4 #fee440'],
+  ['Escuros', '#1f2a44 #23352b #3d0c11 #2b2d42 #14213d #3a0ca3 #264653 #0b090a #4a4e69 #1b263b']
+].map(([n, l]) => [n, l.split(' ')]);
+const GRADS = ['#f6d5c3,#c9d6f0', '#fbe3e8,#fff4d6', '#d4fc79,#96e6a1', '#a1c4fd,#c2e9fb', '#fccb90,#d57eeb', '#232526,#414345', '#0f2027,#2c5364', '#ffecd2,#fcb69f',
+  '#ff9a9e,#fecfef', '#a18cd1,#fbc2eb', '#fad0c4,#ffd1ff', '#84fab0,#8fd3f4', '#f6d365,#fda085', '#43e97b,#38f9d7', '#30cfd0,#330867', '#e0c3fc,#8ec5fc'];
+const BG_PRESETS = [
+  { id: 'caderno', name: 'Caderno', bg: { c1: '#fdfcf7', pat: 'lines', patColor: '#9ec3e6', patSize: 46, patAlpha: 90, grain: 20 } },
+  { id: 'quadriculado', name: 'Quadriculado', bg: { c1: '#fbfbf6', pat: 'grid', patColor: '#a9c8e8', patSize: 40, patAlpha: 70, grain: 15 } },
+  { id: 'kraft', name: 'Kraft', bg: { c1: '#c9a77c', grain: 70 } },
+  { id: 'piquenique', name: 'Piquenique', bg: { c1: '#ffffff', pat: 'gingham', patColor: '#e05a5a', patSize: 60, patAlpha: 55 } },
+  { id: 'bolinhas', name: 'Bolinhas', bg: { c1: '#fde2e4', pat: 'dots', patColor: '#ffffff', patSize: 50, patAlpha: 95 } },
+  { id: 'listras', name: 'Listras', bg: { c1: '#fff4d6', pat: 'stripes', patColor: '#f6c453', patSize: 60, patAlpha: 45 } },
+  { id: 'lousa', name: 'Lousa', bg: { c1: '#23352b', grain: 35 } },
+  { id: 'noite', name: 'Noite estrelada', bg: { type: 'grad', c1: '#0f2027', c2: '#2c5364', angle: 160, pat: 'dots', patColor: '#ffffff', patSize: 34, patAlpha: 22 } },
+  { id: 'ondas', name: 'Ondas', bg: { c1: '#dff3f7', pat: 'waves', patColor: '#7cc6d6', patSize: 70, patAlpha: 60 } },
+  { id: 'xadrez', name: 'Xadrez', bg: { c1: '#ffffff', pat: 'check', patColor: '#111111', patSize: 80, patAlpha: 12 } }
+];
+// miniaturas das combinações prontas, desenhadas com o mesmo código do fundo de verdade
+function drawBgPresetThumbs() {
+  document.querySelectorAll('#panel canvas[data-bgp]').forEach(cv2 => {
+    const P = BG_PRESETS.find(x => x.id === cv2.dataset.bgp); if (!P) return;
+    const b = Object.assign({}, defaultState().bg, { type: 'solid', pat: '', grain: 0 }, P.bg), k = cv2.width / (W * 1.1), x = cv2.getContext('2d');
+    x.setTransform(k, 0, 0, k, 0, 0); drawBg(x, b, W * 1.1, cv2.height / k);
+  });
+}
 function panelBg() {
   const b = S.bg;
   let h = head('Fundo') + `<div class="row"><label>Tipo</label><div class="seg"><button class="${b.type === 'solid' ? 'on' : ''}" data-act="bgType" data-arg="solid">Sólido</button><button class="${b.type === 'grad' ? 'on' : ''}" data-act="bgType" data-arg="grad">Degradê</button></div></div>`;
   h += C(b.type === 'grad' ? 'Cor inicial' : 'Cor', 'c1', 'bg');
   if (b.type === 'grad') h += C('Cor final', 'c2', 'bg') + R('Ângulo', 'angle', 0, 360, 1, 'bg');
   h += R('Textura papel', 'grain', 0, 100, 1, 'bg');
+  h += `<div class="sec">Combinações prontas</div><div class="tpls">${BG_PRESETS.map(P => `<button class="tpl" data-act="bgPreset" data-arg="${P.id}"><canvas width="260" height="92" data-bgp="${P.id}"></canvas><b>${P.name}</b></button>`).join('')}</div>`;
+  h += `<div class="sec">Padrão</div><div class="chips">${BG_PATS.map(([v, l]) => `<button class="chip ${(b.pat || '') === v ? 'on' : ''}" data-act="bgPat" data-arg="${v}">${l}</button>`).join('')}</div>`;
+  if (b.pat) h += C('Cor do padrão', 'patColor', 'bg') + R('Tamanho', 'patSize', 10, 200, 1, 'bg') + R('Intensidade', 'patAlpha', 5, 100, 1, 'bg');
   const hasBg = S.els.some(e => e.tag === 'bgimg');
   h += `<div class="sec">Imagem de fundo</div><p class="note" style="margin:0 0 8px">Cartolina, papel amassado, kraft… Cobre o carrossel inteiro, atrás de tudo.</p><div class="bgrid"><button class="btn" data-act="bgImage">${I('image')} ${hasBg ? 'Trocar' : 'Escolher'}</button>${hasBg ? `<button class="btn" data-act="bgAdjust">${I('move')} Enquadrar</button><button class="btn" data-act="bgRemove" style="grid-column:span 2">Remover imagem de fundo</button>` : ''}</div>`;
-  h += `<div class="sec">Cores</div><div class="sws">${SWATCH.map(c => `<button class="sw" style="background:${c}" data-act="bgSw" data-arg="${c}" title="${c}"></button>`).join('')}</div>`;
+  h += SWATCHES.map(([n, l]) => `<div class="sec">${n}</div><div class="sws">${l.map(c => `<button class="sw" style="background:${c}" data-act="bgSw" data-arg="${c}" title="${c}"></button>`).join('')}</div>`).join('');
   h += `<div class="sec">Degradês</div><div class="sws">${GRADS.map(g => `<button class="sw" style="background:linear-gradient(90deg,${g})" data-act="bgSw" data-arg="${g}"></button>`).join('')}</div>`;
-  h += `<p class="note">O degradê é contínuo: ele atravessa o carrossel inteiro, então as emendas entre slides ficam invisíveis.</p>`;
+  h += `<p class="note">Degradês e padrões são contínuos: atravessam o carrossel inteiro, então as emendas entre slides ficam invisíveis.</p>`;
   return h;
 }
 function panelProject() {
@@ -1649,7 +1757,7 @@ function recentColors() { try { return JSON.parse(localStorage.getItem('emenda-r
 function pushRecent(hex) { try { const r = recentColors().filter(c => c !== hex); r.unshift(hex); localStorage.setItem('emenda-recent', JSON.stringify(r.slice(0, 12))); } catch (_) { } }
 function artColors() {
   const set = new Set(), add = c => { if (/^#[0-9a-f]{6}$/i.test(c || '')) set.add(c.toLowerCase()); };
-  add(S.bg.c1); if (S.bg.type === 'grad') add(S.bg.c2);
+  add(S.bg.c1); if (S.bg.type === 'grad') add(S.bg.c2); if (S.bg.pat) add(S.bg.patColor);
   for (const e of S.els) { add(e.color); add(e.fill); add(e.bg); if (e.stroke) add(e.strokeColor); if (e.pat) add(e.patColor); if (e.outline) add(e.outlineColor); }
   return [...set].slice(0, 12);
 }
