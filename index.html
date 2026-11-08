@@ -38,6 +38,13 @@ header{display:flex;align-items:center;gap:8px;padding:8px 12px;padding-top:max(
 select{height:36px;border-radius:10px;border:1px solid var(--line);background:var(--card);color:var(--text);padding:0 8px;font:inherit}
 .sp{flex:1}
 .saved{font-size:12px;color:var(--muted);white-space:nowrap}
+.saved.err{display:inline!important;color:var(--danger);font-weight:600}
+.vers{max-height:240px;overflow-y:auto;border:1px solid var(--line);border-radius:10px}
+.vers div{display:flex;align-items:center;gap:8px;padding:6px 8px;font-size:12.5px}
+.vers div+div{border-top:1px solid var(--line)}
+.vers span{flex:1;min-width:0}
+.vers small{color:var(--muted);display:block}
+.vers .btn{height:30px;font-size:12px}
 main{flex:1;display:flex;min-height:0}
 #tools{width:78px;flex:none;display:flex;flex-direction:column;gap:2px;padding:8px 6px;border-right:1px solid var(--line);background:var(--panel);overflow-y:auto}
 .tool{display:flex;flex-direction:column;align-items:center;gap:5px;padding:10px 2px;border:0;border-radius:10px;background:none;color:var(--muted);font-size:11px}
@@ -446,7 +453,13 @@ function videoFrame(e, rec, M, max, src = rec.prev) {
 }
 const FCACHE = new Map(), FPEND = new Map();
 function editorSource(e, rec) {
-  if (rec.video) { const v = playerFor(e, rec); if (v.readyState < 2) return rec.prev; const M = adjMatrix(e); return M ? videoFrame(e, rec, M, 720, v) : v; }
+  if (rec.video) {
+    let v = livePlayer(e, rec);
+    if (!v && (ui.sel === e.id || (!LASTFRAME.has(e.id) && loadingPlayers() < 3))) v = playerFor(e, rec); // sem quadro guardado: carrega uma vez (no máx. 3 por vez)
+    else if (!v && !LASTFRAME.has(e.id)) setTimeout(dirty, 400);
+    const src = v && v.readyState >= 2 ? v : (LASTFRAME.get(e.id) || rec.prev);
+    const M = adjMatrix(e); return M ? videoFrame(e, rec, M, 720, src) : src;
+  }
   const M = adjMatrix(e); if (!M) return rec.prev;
   const key = rec.id + '|' + M.map(v => v.toFixed(4)).join(',');
   const c = FCACHE.get(e.id);
@@ -465,7 +478,8 @@ function editorSource(e, rec) {
 // na exportação, fotos com filtro são processadas uma vez só (importante nos slides com vídeo, redesenhados a cada quadro)
 function exportSrc(e, rec, o) {
   if (rec.video) {
-    const v = (o.vmap && o.vmap.get(e.id)) || playerFor(e, rec); if (v.readyState < 2) return rec.prev;
+    let v = (o.vmap && o.vmap.get(e.id)) || livePlayer(e, rec);
+    if (!v || v.readyState < 2) v = LASTFRAME.get(e.id) || rec.prev;
     const M = adjMatrix(e); if (!M) return v;
     const [dw] = coverDims(e, rec); return videoFrame(e, rec, M, Math.min(Math.max(rec.w, rec.h), Math.ceil(dw * o.out * 1.05)), v);
   }
@@ -853,17 +867,40 @@ function resize() {
 /* vídeos no editor: tocam mudos em loop; o canvas é redesenhado ~30x/s */
 /* vídeos no editor: ficam parados no início do trecho e só tocam (sem som) quando você aperta ▶ */
 const isVidEl = e => e.type === 'image' && e.img && IMGS.get(e.img.id) && IMGS.get(e.img.id).video;
-const PLAYERS = new Map(); // id da moldura -> { v, recId }
+/* Cada vídeo só ganha um "tocador" quando precisa (selecionado, tocando, ajustando quadro/trecho, exportando).
+   Parado, a moldura mostra o último quadro guardado numa imagem pequena, e o tocador é liberado para poupar memória. */
+const PLAYERS = new Map(); // id da moldura -> { v, recId, last }
+const LASTFRAME = new Map(); // id da moldura -> canvas com o último quadro mostrado
+function snapFrame(id, v, rec) {
+  if (v.readyState < 2 || v.seeking) return;
+  const k = Math.min(1, 720 / Math.max(rec.w, rec.h)); let c = LASTFRAME.get(id);
+  if (!c) { c = document.createElement('canvas'); LASTFRAME.set(id, c); }
+  c.width = Math.max(1, Math.round(rec.w * k)); c.height = Math.max(1, Math.round(rec.h * k));
+  try { c.getContext('2d').drawImage(v, 0, 0, c.width, c.height); } catch (_) { LASTFRAME.delete(id); }
+}
 function playerFor(e, rec) {
-  const p = PLAYERS.get(e.id); if (p && p.recId === rec.id) return p.v;
+  const p = PLAYERS.get(e.id); if (p && p.recId === rec.id) { p.last = performance.now(); return p.v; }
   if (p) dropPlayer(e.id);
   const v = makeVideo(rec.url), id = e.id;
   const toStart = () => { const el = byId(id); if (el && v.paused) v.currentTime = el.still ? stillT(el, rec) : trimOf(el, rec).a; };
-  v.addEventListener('loadeddata', toStart, { once: true }); v.addEventListener('seeked', dirty);
+  const snap = () => { snapFrame(id, v, rec); dirty(); };
+  v.addEventListener('loadeddata', toStart, { once: true }); v.addEventListener('seeked', snap); v.addEventListener('pause', snap);
   v.play().then(() => { v.pause(); toStart(); }).catch(() => { }); // força o carregamento do 1º quadro (iPhone)
-  PLAYERS.set(id, { v, recId: rec.id }); return v;
+  PLAYERS.set(id, { v, recId: rec.id, last: performance.now() }); return v;
 }
+const loadingPlayers = () => { let n = 0; for (const [id, p] of PLAYERS) if (!LASTFRAME.has(id) && p.v.readyState < 2) n++; return n; };
+const livePlayer = (e, rec) => { const p = PLAYERS.get(e.id); return p && p.recId === rec.id ? p.v : null; };
 function dropPlayer(id) { const p = PLAYERS.get(id); if (!p) return; p.v.pause(); p.v.removeAttribute('src'); p.v.load(); PLAYERS.delete(id); for (const k of VCACHE.keys()) if (k.startsWith(id + '|')) VCACHE.delete(k); }
+// libera os tocadores parados (guardando o quadro); com idle=0 libera todos os parados
+function releasePlayers(idle) {
+  const now = performance.now();
+  for (const [id, p] of PLAYERS) {
+    if (!p.v.paused || p.v.seeking || (ui.sel === id && idle)) continue;
+    if (now - p.last < idle) continue;
+    const rec = IMGS.get(p.recId); if (rec) snapFrame(id, p.v, rec);
+    dropPlayer(id);
+  }
+}
 const isPlaying = e => { const p = PLAYERS.get(e.id); return !!(p && !p.v.paused); };
 /* som no editor e na prévia: ligado por padrão, salvo no aparelho (não afeta a exportação) */
 let edSound = (() => { try { return localStorage.getItem('emenda-edsound') !== '0'; } catch (_) { return true; } })();
@@ -884,6 +921,7 @@ function togglePlay(e) {
     if (v.currentTime < a - 0.05 || v.currentTime >= b - 0.05) v.currentTime = a;
     playSound(v, edSound);
   } else v.pause();
+  PLAYERS.get(e.id).last = performance.now();
   setTimeout(() => { dirty(); if (ui.sel === e.id) renderPanel(); }, 30);
 }
 function seekStill(e) { const rec = IMGS.get(e.img.id), v = playerFor(e, rec); v.pause(); v.currentTime = stillT(e, rec); }
@@ -901,7 +939,8 @@ let vLast = 0, vSync = 0;
 function videoTick(t) {
   if (t - vSync > 1000) { // libera players de molduras que não existem mais (ou trocaram de vídeo)
     vSync = t;
-    for (const [id, p] of PLAYERS) { const e = byId(id); if (!e || !e.img || e.img.id !== p.recId) dropPlayer(id); }
+    for (const [id, p] of PLAYERS) { const e = byId(id); if (!e || !e.img || e.img.id !== p.recId) { dropPlayer(id); LASTFRAME.delete(id); } }
+    releasePlayers(8000);
   }
   let any = false;
   for (const [id, p] of PLAYERS) {
@@ -1258,21 +1297,62 @@ const IDB = {
   db: null,
   open() { if (this.db) return Promise.resolve(this.db); return new Promise((res, rej) => { const r = indexedDB.open('carrossel-studio', 1); r.onupgradeneeded = () => r.result.createObjectStore('kv'); r.onsuccess = () => { this.db = r.result; res(r.result); }; r.onerror = () => rej(r.error); }); },
   async get(k) { const db = await this.open(); return new Promise((res, rej) => { const q = db.transaction('kv').objectStore('kv').get(k); q.onsuccess = () => res(q.result); q.onerror = () => rej(q.error); }); },
-  async set(k, v) { const db = await this.open(); return new Promise((res, rej) => { const t = db.transaction('kv', 'readwrite'); t.objectStore('kv').put(v, k); t.oncomplete = res; t.onerror = () => rej(t.error); }); }
+  async set(k, v) { const db = await this.open(); return new Promise((res, rej) => { const t = db.transaction('kv', 'readwrite'); t.objectStore('kv').put(v, k); t.oncomplete = res; t.onerror = () => rej(t.error); t.onabort = () => rej(t.error || new Error('abort')); }); },
+  async del(k) { const db = await this.open(); return new Promise((res, rej) => { const t = db.transaction('kv', 'readwrite'); t.objectStore('kv').delete(k); t.oncomplete = res; t.onerror = () => rej(t.error); }); },
+  async keys() { const db = await this.open(); return new Promise((res, rej) => { const q = db.transaction('kv').objectStore('kv').getAllKeys(); q.onsuccess = () => res(q.result); q.onerror = () => rej(q.error); }); }
 };
 let saveT;
 function scheduleSave() { clearTimeout(saveT); setSaved('…'); saveT = setTimeout(saveNow, 700); }
 const usedImageIds = () => [...new Set(S.els.filter(e => e.type === 'image' && e.img).map(e => e.img.id))].filter(id => IMGS.has(id));
-async function saveNow() {
+/* Salvamento automático.
+   Cada foto/vídeo é gravado UMA vez (chave media:<id>); a cada alteração só o projeto (leve, sem arquivos) é regravado.
+   Os salvamentos entram numa fila (nunca dois ao mesmo tempo). Se falhar, o app avisa de forma bem visível.
+   A cada 5 min de edição (e antes de abrir/criar outro projeto) guarda uma versão para poder voltar. */
+const SAVED_MEDIA = new Set();
+let saveChain = Promise.resolve(), saveFails = 0, VERS = [], VERSION_EVERY = 5 * 60 * 1000;
+const cloneState = st => JSON.parse(JSON.stringify(st));
+function saveNow() { saveChain = saveChain.then(doSave, doSave); return saveChain; }
+async function doSave() {
   try {
-    await IDB.set('project', { state: S, images: usedImageIds().map(id => [id, IMGS.get(id).blob]), fonts: S.customFonts.filter(f => FONTBUF.has(f.id)).map(f => [f.id, FONTBUF.get(f.id)]), t: Date.now() });
-    setSaved('Salvo neste navegador');
-  } catch (err) { console.warn(err); setSaved('Autosave indisponível'); }
+    for (const id of usedImageIds()) if (!SAVED_MEDIA.has(id)) { await IDB.set('media:' + id, IMGS.get(id).blob); SAVED_MEDIA.add(id); }
+    const t = Date.now();
+    await IDB.set('project', { v: 2, state: S, fonts: S.customFonts.filter(f => FONTBUF.has(f.id)).map(f => [f.id, FONTBUF.get(f.id)]), t });
+    if (S.els.length && (!VERS[0] || t - VERS[0].t >= VERSION_EVERY)) await pushVersion('');
+    if (saveFails) toast('Salvamento voltou a funcionar ✓');
+    saveFails = 0; setSaved('Salvo neste aparelho');
+  } catch (err) {
+    console.warn(err); saveFails++; setSaved('⚠ Não salvou', true);
+    if (saveFails === 1) warnSaveFailed(err);
+  }
 }
-function setSaved(t) { const s = $('#saved'); if (s) s.textContent = t; }
+function warnSaveFailed(err) {
+  const full = err && /quota/i.test((err.name || '') + (err.message || ''));
+  openModal(`<div class="ph"><h3>⚠ O trabalho não está sendo salvo</h3><button class="btn icon" data-act="closeModal">${I('x')}</button></div>
+  <p class="note" style="font-size:13.5px;color:var(--text)">${full ? 'O espaço que o navegador reserva para o app acabou.' : 'O navegador recusou o salvamento automático.'} Até isso se resolver, as próximas alterações podem se perder se o app fechar.</p>
+  <p class="note">Salve agora um arquivo do projeto (.json) no aparelho. ${full ? 'Para liberar espaço, apague vídeos que não estão sendo usados ou comece um projeto novo depois de salvar o .json.' : ''}</p>
+  <div class="bgrid" style="margin-top:12px"><button class="btn primary" data-act="saveProject">${I('download')} Salvar .json agora</button><button class="btn" data-act="retrySave">Tentar de novo</button></div>`);
+}
+function setSaved(t, err) { const s = $('#saved'); if (s) { s.textContent = t; s.classList.toggle('err', !!err); } }
+async function pushVersion(label) {
+  if (!S.els.length) return;
+  VERS.unshift({ t: Date.now(), label, state: cloneState(S) }); VERS = VERS.slice(0, 30);
+  try { await IDB.set('versions', VERS); } catch (err) { console.warn(err); }
+}
+// apaga do aparelho fotos/vídeos que nenhum projeto nem versão usa mais
+async function collectMedia() {
+  try {
+    const used = new Set(), add = st => (st.els || []).forEach(e => { if (e.type === 'image' && e.img) used.add(e.img.id); });
+    add(S); VERS.forEach(v => add(v.state));
+    for (const k of await IDB.keys()) if (typeof k === 'string' && k.startsWith('media:') && !used.has(k.slice(6))) { await IDB.del(k); SAVED_MEDIA.delete(k.slice(6)); }
+  } catch (err) { console.warn(err); }
+}
 async function restoreProject(p) {
   for (const [id, buf] of (p.fonts || [])) { const f = (p.state.customFonts || []).find(x => x.id === id); if (f) await registerFont(f.family, buf, id).catch(() => { }); }
-  for (const [id, blob] of (p.images || [])) { try { await addImageBlob(blob, id); } catch (_) { } }
+  for (const [id, blob] of (p.images || [])) { try { await addImageBlob(blob, id); } catch (_) { } } // formato antigo e arquivo .json
+  for (const e of (p.state.els || [])) { // formato novo: cada foto/vídeo guardado separado
+    if (e.type !== 'image' || !e.img || IMGS.has(e.img.id)) continue;
+    try { const b = await IDB.get('media:' + e.img.id); if (b) { await addImageBlob(b, e.img.id); SAVED_MEDIA.add(e.img.id); } } catch (_) { }
+  }
   S = Object.assign(defaultState(), p.state); S.bg = Object.assign(defaultState().bg, S.bg);
   for (const e of S.els) { if (e.type === 'image') { e.adj = Object.assign(defAdj(), e.adj); if (e.img && !IMGS.has(e.img.id)) e.img = null; } }
 }
@@ -1388,8 +1468,16 @@ const ACT = {
   bgSw(v) { const [a, b] = v.split(','); S.bg.c1 = a; if (b) { S.bg.c2 = b; S.bg.type = 'grad'; } else S.bg.type = 'solid'; commit(); renderPanel(); dirty(); },
   preset(p) { const s = selEl(); if (!s) return; s.adj.preset = p; commit(); renderPanel(); dirty(); },
   resetAdj() { const s = selEl(); if (!s) return; const p = s.adj.preset; s.adj = defAdj(); s.adj.preset = p; commit(); renderPanel(); dirty(); },
-  newProject() { if (!confirm('Começar um projeto novo? O atual será apagado deste navegador (salve antes se quiser).')) return; S = defaultState(); ui.sel = null; resetHistory(); saveNow(); updHeader(); fitInitial(); renderPanel(); dirty(); },
+  newProject() { if (!confirm('Começar um projeto novo? O atual fica guardado em “Versões salvas”, no painel Projeto.')) return; pushVersion('Antes de começar um projeto novo'); S = defaultState(); ui.sel = null; resetHistory(); saveNow(); updHeader(); fitInitial(); renderPanel(); dirty(); },
   openProject() { $('#projIn').click(); },
+  retrySave() { closeModal(); saveFails = 0; saveNow(); },
+  async restoreVersion(i) {
+    const v = VERS[+i]; if (!v) return;
+    if (!confirm(`Voltar para a versão de ${fmtWhen(v.t)}? O estado atual também fica guardado nas versões.`)) return;
+    await pushVersion('Antes de restaurar uma versão');
+    await restoreProject({ state: cloneState(v.state), fonts: [] });
+    ui.sel = null; ui.multi = null; resetHistory(); saveNow(); updHeader(); fitInitial(); renderPanel(); dirty(); toast('Versão restaurada');
+  },
   saveProject() { saveProjectFile(); },
   loadFont() { $('#fontIn').click(); },
   layout(m) { try { localStorage.setItem(LAY_KEY, m); } catch (_) { } applyLayout(); ui.panel = 'project'; renderPanel(); toast({ auto: 'Ferramentas na posição automática', left: 'Ferramentas à esquerda', right: 'Ferramentas à direita', bottom: 'Ferramentas embaixo' }[m] || ''); },
@@ -1491,6 +1579,7 @@ function renderPanel() {
   p.innerHTML = `<div class="pc">${h}</div>`; syncPanel(true);
   if (mode === 'layouts') drawTplThumbs();
   if (mode === 'bg') drawBgPresetThumbs();
+  if (mode === 'project') showStorage();
   const lq = $('#libQ'); if (lq) lq.addEventListener('input', () => { ui.libQ = lq.value; $('#libWrap').innerHTML = libGridHTML(); });
   if (el && el.type === 'image' && el.img) drawPresetThumbs(el);
 }
@@ -1677,8 +1766,16 @@ function panelBg() {
   h += `<p class="note">Degradês e padrões são contínuos: atravessam o carrossel inteiro, então as emendas entre slides ficam invisíveis.</p>`;
   return h;
 }
+const fmtWhen = t => { const d = new Date(t), hoje = new Date(); const hm = d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }); return d.toDateString() === hoje.toDateString() ? `Hoje, ${hm}` : `${d.toLocaleDateString('pt-BR', { weekday: 'short', day: '2-digit', month: '2-digit' })}, ${hm}`; };
+async function showStorage() {
+  const el = $('#storInfo'); if (!el || !navigator.storage || !navigator.storage.estimate) return;
+  try { const e = await navigator.storage.estimate(), mb = x => x > 2e9 ? (x / 1e9).toFixed(1) + ' GB' : Math.round(x / 1e6) + ' MB'; el.textContent = `Espaço usado pelo app neste aparelho: ${mb(e.usage || 0)} de ${mb(e.quota || 0)} disponíveis.`; } catch (_) { }
+}
 function panelProject() {
   return head('Projeto') + `<button class="btn wide" data-act="slice" style="margin-bottom:6px">${I('layout')} Fatiar uma imagem pronta</button><div class="bgrid"><button class="btn" data-act="saveProject">${I('download')} Salvar .json</button><button class="btn" data-act="openProject">${I('folder')} Abrir .json</button><button class="btn" data-act="loadFont">${I('text')} Carregar fonte</button><button class="btn" data-act="newProject">${I('plus')} Novo projeto</button></div>
+  <div class="sec">Versões salvas</div>${VERS.length ? `<div class="vers">${VERS.map((v, i) => `<div><span>${fmtWhen(v.t)}<small>${v.state.slides} slides · ${v.state.els.length} itens${v.label ? ' · ' + esc(v.label) : ''}</small></span><button class="btn" data-act="restoreVersion" data-arg="${i}">Restaurar</button></div>`).join('')}</div>` : '<p class="note" style="margin:0">Nenhuma ainda.</p>'}
+  <p class="note" style="margin:6px 0 0">O app guarda uma versão a cada 5 minutos de edição (até 30) e antes de abrir ou criar outro projeto. Para garantia total, use “Salvar .json” de vez em quando.</p>
+  <p class="note" id="storInfo" style="margin:4px 0 0"></p>
   <div class="sec">Posição das ferramentas</div><div class="seg">${LAYOUTS.map(([v, l]) => `<button class="${layPref() === v ? 'on' : ''}" data-act="layout" data-arg="${v}">${l}</button>`).join('')}</div>
   <p class="note" style="margin:6px 0 0">Automático: embaixo no celular, à esquerda em telas maiores. Fica salvo neste aparelho.</p>
   <div class="sec">Editor</div><label class="chk"><input type="checkbox" data-act="snap" ${ui.snap ? 'checked' : ''}> Ímã (alinhar a slides e elementos)</label><label class="chk"><input type="checkbox" data-act="seams" ${ui.seams ? 'checked' : ''}> Mostrar divisões dos slides</label>
@@ -1689,7 +1786,7 @@ function panelProject() {
   Scroll = andar pelos slides · <kbd>Ctrl</kbd>+scroll = zoom<br>
   <kbd>Shift</kbd> ao redimensionar inverte a trava de proporção · <kbd>Alt</kbd> desliga o ímã<br>
   <kbd>Ctrl</kbd>+<kbd>V</kbd> cola imagens da área de transferência</p>
-  <div class="sec">Privacidade</div><p class="note">Tudo roda neste navegador. As fotos e vídeos não são enviados para nenhum servidor; o projeto fica salvo automaticamente aqui (IndexedDB). Use “Salvar .json” para levar o projeto para outro computador.</p>`;
+  <div class="sec">Privacidade</div><p class="note">Tudo roda neste navegador. As fotos e vídeos não são enviados para nenhum servidor; o projeto fica salvo automaticamente aqui (IndexedDB), com versões anteriores guardadas. Use “Salvar .json” para levar o projeto para outro computador.</p>`;
 }
 function syncPanel(all) {
   const p = $('#panel');
@@ -1867,7 +1964,8 @@ $('#sliceIn').addEventListener('change', async e => {
   const [id] = await filesToIds([f]); if (!id) return; const r = IMGS.get(id), ar = r.w / r.h;
   let best = null;
   for (const ra of ['4:5', '1:1', '3:4']) { const sa = W / RATIOS[ra], n = clamp(Math.round(ar / sa), 1, MAX_SLIDES), err = Math.abs(ar - n * sa) / (n * sa); if (!best || err < best.err - 0.005) best = { ra, n, err }; }
-  if (S.els.length && !confirm('Isso substitui o projeto atual pela imagem fatiada. Continuar?')) return;
+  if (S.els.length && !confirm('Isso substitui o projeto atual pela imagem fatiada. Continuar? (o atual fica em “Versões salvas”)')) return;
+  if (S.els.length) pushVersion('Antes de fatiar uma imagem');
   S.ratio = best.ra; S.slides = best.n; const fr = newFrame(0, 0, TW(), H()); setFrameImage(fr, id); fr.cut = false; S.els = [fr]; S.layout = null;
   commit(); updHeader(); fitInitial(); select(fr.id);
   let msg = `Dividida em ${best.n} slides ${best.ra}.`;
@@ -1908,6 +2006,7 @@ async function openProjectFile(f) {
     const j = JSON.parse(await f.text()); if (!j.state) throw 0;
     const images = []; for (const [id, d] of Object.entries(j.images || {})) images.push([id, await (await fetch(d)).blob()]);
     const fonts = Object.entries(j.fonts || {}).map(([id, b]) => [id, b64ToBuf(b)]);
+    await pushVersion('Antes de abrir um arquivo .json');
     await restoreProject({ state: j.state, images, fonts });
     ui.sel = null; resetHistory(); saveNow(); updHeader(); fitInitial(); renderPanel(); dirty(); toast('Projeto aberto');
   } catch (err) { console.warn(err); toast('Arquivo de projeto inválido.'); }
@@ -2127,16 +2226,49 @@ function updHeader() {
   const n = $('#nSlides'); if (n) n.innerHTML = `${S.slides} <small>slide${S.slides > 1 ? 's' : ''}</small>`;
   const r = $('#ratio'); if (r) { r.value = S.ratio; [...r.options].forEach(o => o.textContent = isSmall() ? o.value : RATIO_LABEL[o.value]); }
 }
+const ctxLost = c => { try { return !!(c && c.getContext && c.getContext('2d').isContextLost && c.getContext('2d').isContextLost()); } catch (_) { return false; } };
+let hiddenAt = 0;
+// Refaz as imagens prontas para a tela a partir dos arquivos originais (o sistema pode apagá-las com pouca memória).
+async function healMedia(force) {
+  FCACHE.clear(); CUTC.clear(); VCACHE.clear(); THUMBS.clear(); BGTILE.key = ''; NOISE = null;
+  for (const [id, c] of LASTFRAME) if (force || ctxLost(c)) LASTFRAME.delete(id);
+  for (const r of IMGS.values()) {
+    if (!force && !ctxLost(r.prev) && !ctxLost(r.thumb)) continue;
+    try {
+      if (r.video) {
+        const v = makeVideo(r.url); await readyVideo(v); v.pause();
+        const snap = max => { const k = Math.min(1, max / Math.max(r.w, r.h)), c = document.createElement('canvas'); c.width = Math.max(1, Math.round(r.w * k)); c.height = Math.max(1, Math.round(r.h * k)); c.getContext('2d').drawImage(v, 0, 0, c.width, c.height); return c; };
+        r.thumb = snap(140); r.img = r.prev = snap(640); r.tw = r.thumb.width; r.th = r.thumb.height; r.pw = r.prev.width; r.ph = r.prev.height;
+        v.removeAttribute('src'); v.load();
+      } else {
+        if (!r.img.complete || !r.img.naturalWidth) r.img = await loadImg(r.url);
+        const p = scaled(r.img, r.w, r.h, 2560), t = scaled(r.img, r.w, r.h, 140);
+        Object.assign(r, { prev: p.c, pw: p.w, ph: p.h, thumb: t.c, tw: t.w, th: t.h });
+      }
+    } catch (err) { console.warn('heal', err); }
+  }
+  for (const e of S.els) if (isVidEl(e) && e.still && !LASTFRAME.has(e.id)) seekStill(e);
+  lastOv = ''; dirty(); if (ui.sel) renderPanel();
+}
 async function init() {
   buildStatic();
   try { const saved = await IDB.get('project'); if (saved && saved.state) await restoreProject(saved); } catch (err) { console.warn(err); }
+  try { VERS = (await IDB.get('versions')) || []; } catch (_) { VERS = []; }
+  if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => { }); // pede para o navegador não apagar os dados
+  setTimeout(collectMedia, 4000);
   await loadLibrary();
   if (isMobile()) ui.panel = null;
   resetHistory(); updHeader(); renderPanel(); resize(); fitInitial();
-  setSaved(S.els.length ? 'Salvo neste navegador' : '');
+  setSaved(S.els.length ? 'Salvo neste aparelho' : '');
   new ResizeObserver(() => { const had = CW; resize(); if (!had) fitInitial(); }).observe($('#stage'));
   matchMedia('(max-width: 820px)').addEventListener('change', () => { applyLayout(); updHeader(); renderPanel(); });
-  document.addEventListener('visibilitychange', () => { if (document.hidden) { clearTimeout(saveT); saveNow(); } if (document.hidden) pauseAll(); });
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) { hiddenAt = Date.now(); clearTimeout(saveT); saveNow(); pauseAll(); releasePlayers(0); }
+    else healMedia(Date.now() - hiddenAt > 60000 && !('isContextLost' in CanvasRenderingContext2D.prototype));
+  });
+  window.addEventListener('pagehide', () => { clearTimeout(saveT); saveNow(); });
+  document.addEventListener('freeze', () => { clearTimeout(saveT); saveNow(); });
+  cv.addEventListener('contextrestored', () => dirty());
 }
 init();
 if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {

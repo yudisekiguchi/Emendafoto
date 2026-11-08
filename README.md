@@ -27,6 +27,13 @@ Toque em **Selecionar** (embaixo do carrossel) e depois nos itens; no computador
 - A gravação acontece em tempo real: um vídeo de 15 s leva cerca de 15 s para exportar. Mantenha a aba aberta.
 - O som do vídeo entra no arquivo exportado. Dá para desligar em **Som do vídeo na exportação**, no painel do vídeo.
 
+## Salvamento e versões
+
+- O projeto é salvo sozinho neste aparelho. Cada foto ou vídeo é gravado uma vez só; a cada alteração só o projeto (leve) é regravado.
+- Se o salvamento falhar (por exemplo, sem espaço), o app avisa na hora e oferece salvar um arquivo `.json`.
+- **Projeto → Versões salvas:** uma versão a cada 5 minutos de edição (até 30) e antes de abrir ou criar outro projeto. Dá para restaurar qualquer uma.
+- Se o sistema apagar as imagens da memória com o app em segundo plano, elas são refeitas ao voltar ao app. Vídeos parados liberam o tocador para poupar memória.
+
 ## Testes automáticos
 
 A pasta `tests/` tem testes que abrem o app num navegador de verdade e conferem as principais funções: fotos, exportação, prévia, vídeos (tocar, som, trecho, só um quadro), seleção de vários itens e posição das ferramentas. Eles rodam sozinhos no GitHub (aba **Actions**, “Testes”) a cada pull request e a cada atualização do `main`; o resultado aparece como ✅ ou ❌ no pull request.
