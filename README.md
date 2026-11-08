@@ -6,6 +6,11 @@ Editor pessoal de carrosséis contínuos para Instagram. Roda no navegador; as f
 
 Em **Projeto → Posição das ferramentas**, escolha onde ficam as ferramentas: **Automático** (embaixo no celular, à esquerda em telas maiores), **Esquerda**, **Direita** ou **Embaixo**. No modo Embaixo, o painel abre sobre a barra e fecha ao tocar de novo na ferramenta ou numa área vazia. A escolha fica salva no aparelho.
 
+## Fundos e stickers
+
+- **Fundo:** 10 combinações prontas (Caderno, Quadriculado, Kraft, Piquenique, Bolinhas, Listras, Lousa, Noite estrelada, Ondas, Xadrez), padrões contínuos com cor, tamanho e intensidade (bolinhas, listras, diagonais, quadriculado, xadrez, piquenique, pautado, ondas), 50 cores em paletas e 16 degradês.
+- **Stickers:** formas (estrela, coração, brilho, selo, balão de fala, seta) com cor editável, 5 fitas adesivas, etiquetas (SHOW, NOVO!, PARTE 1, ANTES, DEPOIS, SALVE) e mais de 80 emojis por tema.
+
 ## Selecionar vários itens
 
 Toque em **Selecionar** (embaixo do carrossel) e depois nos itens; no computador, Shift+clique também funciona. Com vários selecionados dá para aplicar moldura (Polaroid, borda fina, só sombra ou sem moldura), cantos, borda, sombra, filtro e ajustes em todos de uma vez, além de excluir, duplicar, travar, trazer para frente ou mandar para trás. Arraste um item selecionado para mover todos juntos.
