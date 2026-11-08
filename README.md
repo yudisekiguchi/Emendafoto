@@ -32,6 +32,7 @@ Toque em **Selecionar** (embaixo do carrossel) e depois nos itens; no computador
 - O projeto é salvo sozinho neste aparelho. Cada foto ou vídeo é gravado uma vez só; a cada alteração só o projeto (leve) é regravado.
 - Se o salvamento falhar (por exemplo, sem espaço), o app avisa na hora e oferece salvar um arquivo `.json`.
 - **Projeto → Versões salvas:** uma versão a cada 5 minutos de edição (até 30) e antes de abrir ou criar outro projeto. Dá para restaurar qualquer uma.
+- **Projeto → Armazenamento:** mostra o espaço usado e quanto cada limpeza libera. **Apagar versões antigas** mantém o projeto atual; **Concluir projeto e liberar espaço** (depois de salvar o `.json`) apaga o projeto, as versões e os arquivos que só eles usam. A biblioteca de stickers não é afetada.
 - Se o sistema apagar as imagens da memória com o app em segundo plano, elas são refeitas ao voltar ao app. Vídeos parados liberam o tocador para poupar memória.
 
 ## Testes automáticos

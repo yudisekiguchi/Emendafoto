@@ -107,3 +107,41 @@ test('arquivos que nenhum projeto ou versão usa são apagados do aparelho', asy
   expect(await page.evaluate(id => IDB.get('media:' + id), id)).toBeUndefined();
   expect(errors).toEqual([]);
 });
+
+test('apagar versões antigas libera só os arquivos que apenas elas usavam', async ({ page }) => {
+  const errors = await openApp(page);
+  page.on('dialog', d => d.accept());
+  await page.evaluate(() => { VERSION_EVERY = 0; });
+  await addMedia(page, [{ type: 'photo', color: '#f00', name: 'velha.png' }]); await settle(page);
+  const velha = await page.evaluate(() => S.els[0].img.id);
+  await page.evaluate(() => { S.els = []; commit(); });
+  await addMedia(page, [{ type: 'photo', color: '#0f0', name: 'nova.png' }]); await settle(page);
+  const nova = await page.evaluate(() => S.els[0].img.id);
+  await page.click('#tools [data-tool=project]');
+  await expect(page.locator('#freeVers')).toContainText('libera cerca de');
+  await page.click('#panel [data-act=clearVersions]');
+  await page.waitForFunction(() => VERS.length === 0);
+  await expect.poll(() => page.evaluate(id => IDB.get('media:' + id).then(b => !!b), velha)).toBe(false);
+  expect(await page.evaluate(id => IDB.get('media:' + id).then(b => !!b), nova)).toBe(true); // o projeto atual continua
+  expect(await page.evaluate(() => S.els.length)).toBe(1);
+  expect(errors).toEqual([]);
+});
+
+test('concluir projeto apaga projeto, versões e arquivos, mas mantém a biblioteca', async ({ page }) => {
+  const errors = await openApp(page);
+  page.on('dialog', d => d.accept());
+  await page.evaluate(async () => { VERSION_EVERY = 0; await IDB.set('library', [{ id: 'x', name: 'sticker', blob: new Blob(['oi'], { type: 'image/png' }) }]); });
+  await addMedia(page, [{ type: 'photo' }, { type: 'video', seconds: 1 }]); await settle(page);
+  await page.click('#tools [data-tool=project]');
+  await page.click('#panel [data-act=finishProject]');
+  await expect(page.locator('#mbox')).toContainText('libera');
+  await page.click('#mbox [data-act=finishConfirm]');
+  await page.waitForFunction(() => S.els.length === 0 && VERS.length === 0);
+  await expect(page.locator('#toast')).toContainText('liberados'); // a limpeza terminou
+  const keys = await page.evaluate(() => IDB.keys());
+  expect(keys.filter(k => String(k).startsWith('media:'))).toEqual([]);
+  expect(await page.evaluate(() => IDB.get('library').then(l => l.length))).toBe(1);
+  await page.reload(); await page.waitForFunction(() => typeof S !== 'undefined');
+  expect(await page.evaluate(() => [S.els.length, VERS.length])).toEqual([0, 0]); // continua limpo depois de reabrir
+  expect(errors).toEqual([]);
+});
